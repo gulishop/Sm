@@ -253,8 +253,12 @@ async function renderPOS() {
     <h2>POS / Billing</h2>
     <div class="card">
       <div class="form-row"><label>Customer</label>
-        <select id="pos-cust"><option value="">Walk-in Customer</option>
-          ${customers.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("")}</select></div>
+        <select id="pos-cust">
+          <option value="">— Select saved customer —</option>
+          ${customers.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}${c.phone ? " (" + escapeHtml(c.phone) + ")" : ""}</option>`).join("")}
+        </select></div>
+      <div class="form-row"><label>Customer Name (manual)</label>
+        <input id="pos-cust-name" type="text" placeholder="Walk-in name type karo…" /></div>
       <div class="form-row"><label>Add Product</label>
         <div style="display:flex;gap:8px">
           <select id="pos-product" style="flex:1">
@@ -263,7 +267,6 @@ async function renderPOS() {
           </select>
           <button class="icon-btn" id="pos-scan" title="Scan barcode">📷</button>
         </div></div>
-      <button class="btn full" id="pos-add">Add to Cart</button>
     </div>
     <div class="card" id="pos-cart"></div>
     <div class="card">
@@ -275,27 +278,44 @@ async function renderPOS() {
   </div>`;
   root.innerHTML = shell("pos", html);
   renderCart();
-  document.getElementById("pos-add").onclick = () => {
-    const id = document.getElementById("pos-product").value;
+
+  // Saved customer → fill manual name field
+  document.getElementById("pos-cust").onchange = () => {
+    const id = document.getElementById("pos-cust").value;
+    const c = customers.find((x) => x.id === id);
+    document.getElementById("pos-cust-name").value = c ? c.name : "";
+  };
+
+  // Product select → auto add to cart
+  const addProductById = (id) => {
     const p = products.find((x) => x.id === id);
     if (!p) return;
     const existing = cart.find((c) => c.id === id);
-    if (existing) existing.qty += 1; else cart.push({ id: p.id, name: p.name, price: Number(p.salePrice), cost: Number(p.costPrice || 0), qty: 1 });
+    if (existing) existing.qty += 1;
+    else cart.push({ id: p.id, name: p.name, price: Number(p.salePrice), cost: Number(p.costPrice || 0), qty: 1 });
     renderCart();
+    toast(p.name + " added");
   };
+
+  document.getElementById("pos-product").onchange = () => {
+    const id = document.getElementById("pos-product").value;
+    if (!id) return;
+    addProductById(id);
+    // reset dropdown so same product can be selected again
+    document.getElementById("pos-product").value = "";
+  };
+
   document.getElementById("pos-checkout").onclick = () => checkout(products, customers);
   document.getElementById("pos-scan").onclick = () => openBarcodeScanner((code) => {
-    const match = products.find((p) => p.imei === code || p.id === code || p.name.toLowerCase() === code.toLowerCase());
+    const match = products.find((p) => p.imei === code || p.id === code || (p.name && p.name.toLowerCase() === code.toLowerCase()));
     if (match) {
-      const existing = cart.find((c) => c.id === match.id);
-      if (existing) existing.qty += 1; else cart.push({ id: match.id, name: match.name, price: Number(match.salePrice), cost: Number(match.costPrice || 0), qty: 1 });
-      renderCart();
-      toast("Added " + match.name);
+      addProductById(match.id);
     } else toast("No product found for that code");
   });
 }
 function renderCart() {
   const el = document.getElementById("pos-cart");
+  if (!el) return;
   if (!cart.length) { el.innerHTML = `<div class="empty">Cart is empty</div>`; return; }
   const total = cart.reduce((a, c) => a + c.price * c.qty, 0);
   el.innerHTML = cart.map((c, i) => `
@@ -313,14 +333,16 @@ async function checkout(products, customers) {
   if (!cart.length) { toast("Cart is empty"); return; }
   const custId = document.getElementById("pos-cust").value;
   const cust = customers.find((c) => c.id === custId);
+  const manualName = (document.getElementById("pos-cust-name")?.value || "").trim();
   const discount = Number(document.getElementById("pos-discount").value || 0);
   const payment = document.getElementById("pos-payment").value;
   const subtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
   const total = Math.max(0, subtotal - discount);
   const profit = cart.reduce((a, c) => a + (c.price - c.cost) * c.qty, 0) - discount;
   const invoiceNo = "INV-" + (10000 + (await DB.getAll("sales")).length + 1);
-  const sale = { invoiceNo, customerId: custId || null, customerName: cust ? cust.name : "Walk-in Customer",
-    customerPhone: cust ? cust.phone : "", items: cart, subtotal, discount, total, profit, payment, date: new Date().toISOString() };
+  const customerName = manualName || (cust ? cust.name : "Walk-in Customer");
+  const sale = { invoiceNo, customerId: custId || null, customerName,
+    customerPhone: cust ? (cust.phone || "") : "", items: cart.map((c) => ({ id: c.id, name: c.name, price: c.price, cost: c.cost, qty: c.qty })), subtotal, discount, total, profit, payment, date: new Date().toISOString() };
   await DB.put("sales", sale);
   for (const item of cart) {
     const p = products.find((x) => x.id === item.id);
@@ -434,6 +456,7 @@ async function printSaleThermal(sale) {
   await printer.printText(line, { align: "center" });
   await printer.printText("Thank you for your business!", { align: "center" });
   await printer.printSmall("Software by Fazal Khan Chandio", { align: "center" });
+  await printer.printSmall("03333909816", { align: "center" });
   await printer.feed(printer.feedBeforeCut || 1);
   await printer.doCut();
   toast("Printed");

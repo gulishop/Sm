@@ -164,7 +164,9 @@ window.SMSync = {
     this._flushing = true;
     try {
       const queue = await DB.getSyncQueue();
-      for (const item of queue) {
+      // process max 25 per tick to stay under write limits
+      const batch = queue.slice(0, 25);
+      for (const item of batch) {
         try {
           const ref = this._db
             .collection(`${ROOT}/${item.store}/items`)
@@ -173,20 +175,47 @@ window.SMSync = {
           if (item.op === "delete") {
             await ref.delete();
           } else {
-            // put / update
-            const payload = { ...item.data, _syncedAt: Date.now(), _by: user.uid };
+            // Compact payload — drop undefined, cap string sizes, avoid 1MB limit
+            const payload = this._compact(item.data);
+            payload._syncedAt = Date.now();
+            payload._by = user.uid;
+            const approx = JSON.stringify(payload).length;
+            if (approx > 900000) {
+              console.warn("[SMSync] Skip oversized doc", item.store, item.data.id, approx);
+              await DB.removeFromQueue(item.id); // drop rather than block queue
+              continue;
+            }
             await ref.set(payload, { merge: true });
           }
           await DB.removeFromQueue(item.id);
         } catch (err) {
           console.warn("[SMSync] Failed to sync item", item.id, err);
-          // leave in queue for retry
         }
       }
       window.dispatchEvent(new CustomEvent("sm:synced"));
     } finally {
       this._flushing = false;
     }
+  },
+
+  _compact(data) {
+    if (!data || typeof data !== "object") return {};
+    const out = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (v === undefined || v === null) continue;
+      if (typeof v === "string" && v.length > 20000) {
+        out[k] = v.slice(0, 20000); // hard cap long text
+      } else if (k === "items" && Array.isArray(v)) {
+        // sale line items — keep only needed fields
+        out[k] = v.slice(0, 200).map((it) => ({
+          id: it.id, name: String(it.name || "").slice(0, 120),
+          price: Number(it.price) || 0, cost: Number(it.cost) || 0, qty: Number(it.qty) || 0
+        }));
+      } else if (typeof v !== "function") {
+        out[k] = v;
+      }
+    }
+    return out;
   },
 
   // Full pull (optional, on first login)
