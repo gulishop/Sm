@@ -151,7 +151,7 @@ window.SMSync = {
     this._flushing = true;
     try {
       const queue = await DB.getSyncQueue();
-      const batch = queue.slice(0, 40);
+      const batch = queue.slice(0, 80);
       for (const item of batch) {
         try {
           if (!item.data || !item.data.id) {
@@ -264,4 +264,4 @@ setInterval(() => {
   if (navigator.onLine && window.SMSync && SMSync.isReady() && SMSync.currentUser()) {
     SMSync.flushQueue().catch(() => {});
   }
-}, 3000);
+}, 1000);

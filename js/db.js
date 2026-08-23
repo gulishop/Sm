@@ -129,9 +129,13 @@ const DB = {
       tx.onerror = () => reject(tx.error);
     });
     window.dispatchEvent(new CustomEvent("sm:queued"));
-    // Trigger sync if online and Firebase ready
+    // Fast sync: immediate + short retry
     if (navigator.onLine && window.SMSync && window.SMSync.isReady()) {
       window.SMSync.flushQueue().catch(console.warn);
+      setTimeout(() => {
+        if (window.SMSync && window.SMSync.isReady())
+          window.SMSync.flushQueue().catch(() => {});
+      }, 400);
     }
   },
 
