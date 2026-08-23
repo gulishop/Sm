@@ -42,12 +42,37 @@ Then: repo **Settings → Pages → Deploy from branch → main → /(root)** �
 Your app will be live at `https://<your-username>.github.io/<repo-name>/`
 (HTTPS is required for the install prompt and offline mode to work).
 
-## What's scaffolded but needs you to finish
-Given the size of the full feature checklist (100+ items — barcode/QR scanning,
-WhatsApp/SMS integration, staff roles & permissions, PIN/fingerprint lock,
-AI sales analytics, multi-branch, etc.), this build gives you a **working core**
-covering the most-used daily flows plus the offline/sync/PWA foundation
-everything else plugs into. The architecture (IndexedDB store list in `db.js`,
-the `moduleListPage()` + `openForm()` helpers in `app.js`) is built so adding
-each remaining module is mostly "copy an existing module's ~20-line config
-block and change the fields" — happy to build out any specific one next.
+## Login (demo — change before going live)
+- **Username:** `admin` **Password:** `admin123`
+- This is a local check in `js/app.js` (`DEMO_ADMIN`), not real authentication.
+  Good enough for testing/demo; swap in Firebase Authentication later (scaffold
+  is already wired for Firebase in `firebase-sync.js` — add Auth the same way).
+- **Staff logins**: add staff in Settings → Staff & Roles. They log in with
+  their phone number as username and their PIN as password. Roles:
+  - `admin` — full access
+  - `cashier` — Dashboard, POS, Products, Customers, Installments, Reports
+  - `technician` — Dashboard, Repairs only
+
+## Newly added in this pass
+- Demo login + staff PIN login + role-based navigation
+- **Barcode/QR camera scanner** (POS, Products, Product form for IMEI) — uses `html5-qrcode` via CDN, needs camera permission + internet on first load
+- **Barcode label printing** for products — uses `JsBarcode` via CDN
+- **Printable invoice** + **WhatsApp invoice sharing** (`wa.me` link) after checkout
+- **Discount field + payment method** (Cash/Card/Bank/Installment) on checkout
+- **Loyalty points** (auto: 1 point per Rs 1,000 spent) + **Customer Ledger** view
+- **Staff & Roles** module with PIN login + **Attendance** marking
+- **Purchase Orders** module for suppliers
+- **Cash Book / Daily Closing** report
+- **Audit Logs** — every create/update/delete/login is recorded
+- **CSV import** for products (Settings → Import Products) + existing CSV export for sales
+- **Voice search** (mic icon on list pages, browser Web Speech API)
+- Shop branch name field (Settings) — first step toward multi-branch
+
+## Still not included (need external/paid services or a backend server)
+A static PWA genuinely can't do these without a server component:
+- **Real SMS sending** — needs a paid SMS gateway (Twilio, etc.) with a backend
+- **Real push notifications** — needs a push server (Firebase Cloud Messaging functions)
+- **Fingerprint login** — possible via WebAuthn but needs HTTPS + device support testing
+- **True multi-branch with separate logins/data isolation** — needs backend rules (Firestore security rules once Firebase Auth is added)
+- **AI Sales Analytics** — can be added as a simple trends/forecast view once you have a few weeks of real sales data logged
+Everything else from your original list is now implemented.
