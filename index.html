@@ -4,29 +4,18 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Sanaullah Mobile Communication</title>
-<meta name="description" content="Sanaullah Mobile Communication - Sales, Accessories, Repairs & Service management app" />
 <meta name="theme-color" content="#1e5fff" />
-
-<!-- PWA install behaviour: Android/Chrome -->
 <link rel="manifest" href="manifest.json" />
-<meta name="mobile-web-app-capable" content="yes" />
-
-<!-- PWA install behaviour: iOS Safari (Android reads manifest.json above) -->
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="apple-mobile-web-app-title" content="SM Communication" />
-<link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="icon" href="icons/icon-192.png" />
-
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="stylesheet" href="css/style.css" />
 
-<!-- Firebase SDK (compat) -- Auth + Firestore. Used by js/firebase-sync.js -->
+<!-- Firebase SDK (compat) — Auth + Firestore -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
-<!-- Barcode/QR camera scanning + barcode label generation + QR code rendering.
-     Used by js/app.js (Html5Qrcode, JsBarcode, QRCode) and js/thermal-printer.js (QRCode) -->
+<!-- Barcode/QR scanning + label generation -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -40,22 +29,8 @@
 <script src="js/app.js"></script>
 <script>
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", async () => {
-      const reg = await navigator.serviceWorker.register("service-worker.js").catch(console.warn);
-      if (!reg) return;
-
-      // If a new service worker takes control (new deploy detected), reload
-      // ONCE automatically so the update shows immediately -- no more manual
-      // repeated refreshing needed.
-      let refreshed = false;
-      navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (refreshed) return;
-        refreshed = true;
-        window.location.reload();
-      });
-
-      // Check for a newer service worker on every load
-      reg.update().catch(() => {});
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("service-worker.js").catch(console.warn);
     });
   }
 </script>
