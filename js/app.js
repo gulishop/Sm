@@ -225,7 +225,13 @@ async function renderDashboard() {
   const todaySales = sales.filter((s) => (s.date || "").slice(0, 10) === today);
   const todayTotal = todaySales.reduce((a, s) => a + Number(s.total || 0), 0);
   const todayProfit = todaySales.reduce((a, s) => a + Number(s.profit || 0), 0);
-  const lowStock = products.filter((p) => Number(p.qty) <= Number(p.reorderLevel || 5));
+  const outStock = products.filter((p) => Number(p.qty) <= 0);
+  const lowStock = products.filter((p) => {
+    const q = Number(p.qty);
+    const rl = Number(p.reorderLevel || 5);
+    return q > 0 && q <= rl;
+  });
+  const stockAlert = outStock.length + lowStock.length;
   const dueInstallments = installments.filter((i) => i.status !== "paid");
   const dueTotal = dueInstallments.reduce((a, i) => a + Number(i.remaining || 0), 0);
   const openRepairs = repairs.filter((r) => r.status !== "delivered");
@@ -249,9 +255,9 @@ async function renderDashboard() {
       <div class="delta">Stock list · tap</div>
     </div>
     <div class="stat-card stat-orange stat-tap" onclick="location.hash='#/products'">
-      <div class="label">Low Stock</div>
-      <div class="value">${lowStock.length}</div>
-      <div class="delta">Manage · tap</div>
+      <div class="label">Stock Alert</div>
+      <div class="value">${stockAlert}</div>
+      <div class="delta">${outStock.length} out · ${lowStock.length} low · tap</div>
     </div>
   </div>
 
@@ -780,11 +786,11 @@ const productsOpts = {
     { key: "reorderLevel", label: "Low Stock Alert Level", type: "number", default: 5 },
   ],
   renderRow: (p) => `<div class="list-row" onclick='editItem("products","${p.id}", productsOpts)'>
-    <div class="l-left"><div class="dot" style="background:${Number(p.qty) <= Number(p.reorderLevel || 5) ? "var(--red)" : "var(--blue)"}">📦</div>
+    <div class="l-left"><div class="dot" style="background:${Number(p.qty) <= 0 ? "var(--red)" : Number(p.qty) <= Number(p.reorderLevel || 5) ? "var(--orange)" : "var(--blue)"}">📦</div>
       <div><div class="l-title">${escapeHtml(p.name)}</div><div class="l-sub">${escapeHtml(p.category || "")} · Stock: ${p.qty}</div></div></div>
     <div style="text-align:right;display:flex;align-items:center;gap:8px">
       <button class="icon-btn" style="width:30px;height:30px" onclick='event.stopPropagation();printBarcodeLabel(${JSON.stringify(p).replace(/'/g, "&#39;")})'>🏷️</button>
-      <div><div class="l-title">${fmt(p.salePrice)}</div>${Number(p.qty) <= Number(p.reorderLevel || 5) ? `<span class="pill bad">Low</span>` : `<span class="pill ok">OK</span>`}</div>
+      <div><div class="l-title">${fmt(p.salePrice)}</div>${Number(p.qty) <= 0 ? `<span class="pill bad">Out</span>` : Number(p.qty) <= Number(p.reorderLevel || 5) ? `<span class="pill warn">Low</span>` : `<span class="pill ok">OK</span>`}</div>
     </div></div>`
 };
 window.productsOpts = productsOpts;
