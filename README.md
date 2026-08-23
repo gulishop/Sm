@@ -1,29 +1,22 @@
 # Sanaullah Mobile Communication — PWA
 
-Offline-first POS / inventory / repairs app for mobile shops.
+Offline-first shop POS: sales, stock, repairs, installments, Firebase Auth + sync, thermal print.
+
+## Login
+- **Firebase email + password only** (Console → Authentication → Users → Add user)
+- Offline: previous session restores automatically after first online login
 
 ## Features
-- POS billing, products, customers, repairs, installments
-- Staff roles (admin / cashier / technician)
-- Barcode scan & label print, WhatsApp invoice, thermal print
-- Backup / restore, CSV import, cash book, audit logs
-- **Firebase Auth + Firestore real-time sync** (optional)
+- POS / Billing (manual customer name + phone, auto-add product to cart)
+- Products, customers, repairs, installments, suppliers, expenses
+- Staff roles, purchase orders, cash book, audit logs
+- Barcode scan / labels, WhatsApp invoice, thermal ESC/POS (BT/USB)
+- Backup / restore JSON, CSV product import
+- Firebase Auth + Firestore sync (~3s flush + realtime listeners)
 
-## Quick start
-1. Open `index.html` in a browser (or host on any static server / GitHub Pages).
-2. Login: **admin** / **admin123**
-
-## Enable Firebase Cloud Sync + Auth
-
-1. Go to [Firebase Console](https://console.firebase.google.com) → Create project.
-2. Enable **Authentication** → Sign-in method → **Email/Password**.
-3. Create **Firestore Database** (start in test mode for development).
-4. Project settings → Your apps → Web → copy the config object.
-5. Open `js/firebase-sync.js` and replace `FIREBASE_CONFIG` values.
-6. In `index.html` **uncomment** the three Firebase `<script>` tags (app, auth, firestore).
-7. Reload. Use your email to **Create Firebase Account** or login.
-8. Recommended Firestore rules (production):
-
+## Setup
+1. Firebase: Email/Password Auth ON + Firestore created
+2. Rules (short):
 ```
 rules_version = '2';
 service cloud.firestore {
@@ -34,12 +27,8 @@ service cloud.firestore {
   }
 }
 ```
-
-## Demo credentials
-- Username: `admin`
-- Password: `admin123`
-
-Staff can also login with their **phone + PIN** (created under Settings → Staff).
+3. Host static files (GitHub Pages / Netlify / Firebase Hosting)
+4. Login with a user created in Firebase Console
 
 ## Author
-Software by Fazal Khan Chandio · 03333909816
+Fazal Khan Chandio · 03333909816
