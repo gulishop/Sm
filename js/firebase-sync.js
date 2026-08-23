@@ -111,7 +111,7 @@ window.SMSync = {
     if (!this._db) return;
 
     for (const store of SYNC_STORES) {
-      const col = this._db.collection(`${ROOT}/${store}`);
+      const col = this._db.collection(`${ROOT}/${store}/items`);
       const unsub = col.onSnapshot(
         async (snap) => {
           for (const change of snap.docChanges()) {
@@ -169,7 +169,7 @@ window.SMSync = {
       for (const item of batch) {
         try {
           const ref = this._db
-            .collection(`${ROOT}/${item.store}`)
+            .collection(`${ROOT}/${item.store}/items`)
             .doc(String(item.data.id));
 
           if (item.op === "delete") {
@@ -227,7 +227,7 @@ window.SMSync = {
   async pullAll() {
     if (!this.isReady()) return;
     for (const store of SYNC_STORES) {
-      const snap = await this._db.collection(`${ROOT}/${store}`).get();
+      const snap = await this._db.collection(`${ROOT}/${store}/items`).get();
       for (const doc of snap.docs) {
         const data = doc.data();
         if (data && data.id) {
