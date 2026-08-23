@@ -2,7 +2,7 @@
    All data reads/writes go through window.DB (IndexedDB, offline-first). */
 
 const root = document.getElementById("app");
-const state = { user: null, theme: localStorage.getItem("sm_theme") || "dark" };
+const state = { user: null, theme: localStorage.getItem("sm_theme") || "light" };
 document.documentElement.setAttribute("data-theme", state.theme);
 
 const fmt = (n) => "Rs " + Number(n || 0).toLocaleString("en-PK");
@@ -75,6 +75,7 @@ function renderLogin() {
     <div id="li-error" style="color:#f87171;font-size:12px;margin:-4px 0 10px;display:none"></div>
     <button class="btn-primary" id="li-btn">LOGIN</button>
     <div style="color:var(--muted);font-size:12px;margin-top:10px">Demo login — Username: <b>admin</b> · Password: <b>admin123</b></div>
+    <div style="color:var(--muted);font-size:10px;margin-top:18px">Software by Fazal Khan Chandio · 03333909816</div>
   </div>`;
   document.getElementById("li-btn").onclick = doLogin;
   document.getElementById("li-pass").onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
@@ -290,29 +291,43 @@ function showInvoice(sale) {
   const overlay = document.createElement("div");
   overlay.id = "invoice-overlay";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px";
-  const itemsHtml = sale.items.map((i) => `<div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0">
-    <span>${escapeHtml(i.name)} × ${i.qty}</span><span>${fmt(i.price * i.qty)}</span></div>`).join("");
+  const itemsHtml = sale.items.map((i) => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">
+    <span>${escapeHtml(i.name)} x${i.qty}</span><span>${fmt(i.price * i.qty)}</span></div>`).join("");
   const waText = encodeURIComponent(
     `Sanaullah Mobile Communication\nInvoice #${sale.invoiceNo}\nCustomer: ${sale.customerName}\n\n` +
     sale.items.map((i) => `${i.name} x${i.qty} = ${fmt(i.price * i.qty)}`).join("\n") +
     `\n\nDiscount: ${fmt(sale.discount)}\nTotal: ${fmt(sale.total)}\nPayment: ${sale.payment}\nThank you for your business!`
   );
-  overlay.innerHTML = `<div id="invoice-box" style="background:#fff;color:#111;width:100%;max-width:360px;border-radius:14px;padding:20px">
-    <div style="text-align:center;font-weight:800">SANAULLAH MOBILE COMMUNICATION</div>
-    <div style="text-align:center;font-size:11px;color:#666;margin-bottom:10px">Sales · Accessories · Repairs · Service</div>
-    <div style="font-size:13px">Invoice #${sale.invoiceNo}<br/>Customer: ${escapeHtml(sale.customerName)}<br/>Date: ${new Date(sale.date).toLocaleString()}</div>
-    <hr/>${itemsHtml}<hr/>
-    <div style="display:flex;justify-content:space-between;font-size:13px"><span>Subtotal</span><span>${fmt(sale.subtotal)}</span></div>
-    <div style="display:flex;justify-content:space-between;font-size:13px"><span>Discount</span><span>-${fmt(sale.discount)}</span></div>
-    <div style="display:flex;justify-content:space-between;font-weight:800;font-size:15px;margin-top:4px"><span>Total</span><span>${fmt(sale.total)}</span></div>
-    <div style="font-size:12px;color:#666;margin-top:4px">Payment: ${sale.payment}</div>
+  const qrPayload = `SM|${sale.invoiceNo}|${sale.customerName}|${sale.total}|${sale.date}`;
+  overlay.innerHTML = `<div id="invoice-print-area">
+  <div id="invoice-box" class="receipt-80mm">
+    <div style="text-align:center;font-weight:800;font-size:15px">SANAULLAH MOBILE COMMUNICATION</div>
+    <div style="text-align:center;font-size:10px;margin-bottom:6px">Sales · Accessories · Repairs · Service</div>
+    <div class="rline"></div>
+    <div style="font-size:11px">Invoice #${sale.invoiceNo}<br/>Customer: ${escapeHtml(sale.customerName)}${sale.customerPhone ? " (" + escapeHtml(sale.customerPhone) + ")" : ""}<br/>Date: ${new Date(sale.date).toLocaleString()}</div>
+    <div class="rline"></div>
+    ${itemsHtml}
+    <div class="rline"></div>
+    <div style="display:flex;justify-content:space-between;font-size:12px"><span>Subtotal</span><span>${fmt(sale.subtotal)}</span></div>
+    <div style="display:flex;justify-content:space-between;font-size:12px"><span>Discount</span><span>-${fmt(sale.discount)}</span></div>
+    <div style="display:flex;justify-content:space-between;font-weight:800;font-size:14px;margin-top:2px"><span>TOTAL</span><span>${fmt(sale.total)}</span></div>
+    <div style="font-size:11px;margin-top:2px">Payment: ${sale.payment}</div>
+    <div class="rline"></div>
+    <div id="qr-code" style="display:flex;justify-content:center;margin:8px 0"></div>
+    <div style="text-align:center;font-size:11px">Thank you for your business!</div>
+    <div style="text-align:center;font-size:9px;margin-top:8px;color:#555">Software by Fazal Khan Chandio · 03333909816</div>
   </div>
-  <div style="position:fixed;bottom:24px;left:0;right:0;display:flex;gap:10px;justify-content:center;padding:0 20px">
-    <button class="btn" onclick="window.print()">🖨️ Print</button>
+  </div>
+  <div class="no-print" style="position:fixed;bottom:24px;left:0;right:0;display:flex;gap:10px;justify-content:center;padding:0 20px;flex-wrap:wrap">
+    <button class="btn" id="thermal-print-btn">🖨️ Thermal Print</button>
     ${sale.customerPhone ? `<a class="btn" style="background:#25D366;text-decoration:none" target="_blank" href="https://wa.me/${sale.customerPhone.replace(/\D/g, "")}?text=${waText}">WhatsApp</a>` : ""}
     <button class="btn ghost" id="invoice-close">Close</button>
   </div>`;
   document.body.appendChild(overlay);
+  if (typeof QRCode !== "undefined") {
+    new QRCode(document.getElementById("qr-code"), { text: qrPayload, width: 90, height: 90, correctLevel: QRCode.CorrectLevel.M });
+  }
+  document.getElementById("thermal-print-btn").onclick = () => window.print();
   document.getElementById("invoice-close").onclick = () => { overlay.remove(); location.hash = "#/dashboard"; };
 }
 
@@ -387,6 +402,7 @@ function printBarcodeLabel(product) {
   const w = window.open("", "_blank");
   w.document.write(`<html><body style="text-align:center;font-family:sans-serif">
     <div>${escapeHtml(product.name)}</div><svg id="bc"></svg><div>${fmt(product.salePrice)}</div>
+    <div style="font-size:9px;color:#777;margin-top:6px">Software by Fazal Khan Chandio · 03333909816</div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"><\/script>
     <script>JsBarcode("#bc","${(product.imei || product.id)}",{width:2,height:60}); window.print();<\/script>
     </body></html>`);
@@ -652,11 +668,19 @@ async function renderSettings() {
       <button class="btn full ghost" onclick="location.hash='#/audit-logs'">📋 Audit Logs</button>
     </div>
     <div class="card">
+      <div class="l-title" style="margin-bottom:6px">Backup & Restore</div>
+      <div class="l-sub" style="margin-bottom:10px">Save all your shop data (products, sales, customers, repairs, everything) as one file, or restore it later on this or another device.</div>
+      <button class="btn full" id="backup-now" style="margin-bottom:8px">⬇️ Backup Now</button>
+      <label class="btn full ghost" style="display:block;text-align:center" for="restore-file">⬆️ Restore from Backup</label>
+      <input type="file" id="restore-file" accept="application/json" style="display:none" />
+    </div>
+    <div class="card">
       <div class="l-title" style="margin-bottom:6px">Import Products (CSV)</div>
       <div class="l-sub" style="margin-bottom:8px">Columns: name,category,costPrice,salePrice,qty,reorderLevel</div>
       <input type="file" id="csv-import" accept=".csv" />
     </div>` : ""}
     <button class="btn full ghost" id="set-logout">Logout</button>
+    <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:16px">Software by Fazal Khan Chandio · 03333909816</div>
   </div>`;
   root.innerHTML = shell("settings", html);
   document.getElementById("set-branch-save").onclick = async () => {
@@ -677,6 +701,47 @@ async function renderSettings() {
   };
   const csvInput = document.getElementById("csv-import");
   if (csvInput) csvInput.onchange = (e) => importProductsCSV(e.target.files[0]);
+  const backupBtn = document.getElementById("backup-now");
+  if (backupBtn) backupBtn.onclick = backupNow;
+  const restoreInput = document.getElementById("restore-file");
+  if (restoreInput) restoreInput.onchange = (e) => restoreBackup(e.target.files[0]);
+}
+
+// ---------- Backup & Restore ----------
+const BACKUP_STORES = ["products", "customers", "sales", "repairs", "installments",
+  "suppliers", "expenses", "staff", "settings", "purchaseOrders", "auditLogs", "attendance"];
+
+async function backupNow() {
+  const data = {};
+  for (const store of BACKUP_STORES) data[store] = await DB.getAll(store);
+  const payload = { app: "sm-app", version: 2, exportedAt: new Date().toISOString(), data };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `sm-backup-${todayKey()}.json`;
+  a.click();
+  await logAudit("backup", "Full backup exported");
+  toast("Backup downloaded");
+}
+
+function restoreBackup(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    let payload;
+    try { payload = JSON.parse(e.target.result); } catch { toast("Invalid backup file"); return; }
+    if (!payload || !payload.data) { toast("Invalid backup file"); return; }
+    let count = 0;
+    for (const store of BACKUP_STORES) {
+      const records = payload.data[store];
+      if (!Array.isArray(records)) continue;
+      for (const rec of records) { await DB.put(store, rec); count++; }
+    }
+    await logAudit("restore", `Restored ${count} records from backup`);
+    toast(`Restored ${count} records`);
+    router();
+  };
+  reader.readAsText(file);
 }
 
 function importProductsCSV(file) {
