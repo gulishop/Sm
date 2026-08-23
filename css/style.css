@@ -130,3 +130,23 @@ input, select { font-family: inherit; }
   .receipt-80mm { width: 80mm; max-width: 80mm; box-shadow: none; }
   .no-print { display: none !important; }
 }
+
+/* ---- Modern dashboard ---- */
+.stat-tap { cursor: pointer; transition: transform .15s, box-shadow .15s; }
+.stat-tap:active { transform: scale(0.97); }
+.dash-pills { display: flex; gap: 8px; padding: 4px 16px 8px; overflow-x: auto; }
+.dash-pill {
+  flex-shrink: 0; border: 1px solid var(--border); background: var(--card);
+  color: var(--text); border-radius: 20px; padding: 8px 14px; font-size: 12px; font-weight: 600;
+}
+.qa-modern { grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.qa-modern-item {
+  padding: 14px 6px 12px; border-radius: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.04);
+}
+.qa-modern-item .qi {
+  width: 36px; height: 36px; border-radius: 12px; font-size: 18px; margin-bottom: 8px;
+}
+.qa-modern-item span { font-weight: 600; font-size: 11px; }
+.dash-sale-row { border-radius: 12px; margin: 0 12px 6px; border: 1px solid var(--border);
+  background: var(--card); border-bottom: 1px solid var(--border); }
