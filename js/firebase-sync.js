@@ -55,8 +55,11 @@ window.SMSync = {
         firebase.initializeApp(FIREBASE_CONFIG);
       }
       this._auth = firebase.auth();
+      // Keep login across reloads / offline (LOCAL = IndexedDB)
+      try {
+        await this._auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+      } catch (e) { /* older browsers */ }
       this._db = firebase.firestore();
-      // Optional: enable offline persistence for Firestore itself
       try {
         await this._db.enablePersistence({ synchronizeTabs: true });
       } catch (e) {

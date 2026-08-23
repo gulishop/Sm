@@ -59,7 +59,7 @@ async function router() {
 window.addEventListener("hashchange", router);
 
 // ---------- Login ----------
-// Firebase Auth only (email + password). Staff PIN login kept as local fallback.
+// Firebase Auth only — no demo user. Offline: restored session works after first online login.
 function renderLogin() {
   const fbReady = window.SMSync && window.SMSync.isConfigured();
   root.innerHTML = `
@@ -67,46 +67,15 @@ function renderLogin() {
     <img src="icons/icon-512.png" class="login-logo" alt="logo" onerror="this.style.display='none'" />
     <div class="login-title">SANAULLAH</div>
     <div class="login-sub">MOBILE COMMUNICATION</div>
-    <div class="field"><input id="li-user" placeholder="Email" autocomplete="username" /></div>
+    <div class="field"><input id="li-user" type="email" placeholder="Email" autocomplete="username" /></div>
     <div class="field"><input id="li-pass" type="password" placeholder="Password" autocomplete="current-password" /></div>
     <div id="li-error" style="color:#f87171;font-size:12px;margin:-4px 0 10px;display:none"></div>
     <button class="btn-primary" id="li-btn">LOGIN</button>
-    <button class="btn-secondary" id="li-signup" style="margin-top:8px">Create Account</button>
-    <div style="color:var(--muted);font-size:12px;margin-top:12px">${fbReady ? "Firebase Auth · Cloud Sync ON" : "⚠️ Firebase not configured"}</div>
+    <div style="color:var(--muted);font-size:12px;margin-top:14px">${fbReady ? (navigator.onLine ? "🟢 Online · Firebase Auth" : "🟠 Offline · pehle se login session chalega") : "⚠️ Firebase config missing"}</div>
     <div style="color:var(--muted);font-size:10px;margin-top:18px">Software by Fazal Khan Chandio · 03333909816</div>
   </div>`;
   document.getElementById("li-btn").onclick = doLogin;
   document.getElementById("li-pass").onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
-  document.getElementById("li-signup").onclick = doSignup;
-}
-
-async function doSignup() {
-  const u = document.getElementById("li-user").value.trim();
-  const p = document.getElementById("li-pass").value.trim();
-  const err = document.getElementById("li-error");
-  err.style.display = "none";
-  if (!u.includes("@") || p.length < 6) {
-    err.textContent = "Valid email + password (min 6 chars) required.";
-    err.style.display = "block";
-    return;
-  }
-  if (!window.SMSync || !window.SMSync.isReady()) {
-    err.textContent = "Firebase not ready. Check internet & config.";
-    err.style.display = "block";
-    return;
-  }
-  try {
-    await SMSync.signUp(u, p);
-    state.user = { name: u.split("@")[0], role: "admin", email: u, firebase: true };
-    await DB.put("settings", { id: "session", user: state.user });
-    await logAudit("login", state.user.name + " signed up via Firebase");
-    toast("Account created");
-    location.hash = "#/dashboard";
-    router();
-  } catch (e) {
-    err.textContent = e.message || "Signup failed";
-    err.style.display = "block";
-  }
 }
 
 async function doLogin() {
@@ -116,50 +85,59 @@ async function doLogin() {
   err.style.display = "none";
 
   if (!u || !p) {
-    err.textContent = "Enter email and password.";
+    err.textContent = "Email aur password likho.";
+    err.style.display = "block";
+    return;
+  }
+  if (!u.includes("@")) {
+    err.textContent = "Valid email address use karo.";
+    err.style.display = "block";
+    return;
+  }
+  if (!window.SMSync || !window.SMSync.isConfigured()) {
+    err.textContent = "Firebase configured nahi hai.";
+    err.style.display = "block";
+    return;
+  }
+  if (!window.SMSync.isReady()) {
+    // wait briefly for SDK init
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  if (!window.SMSync.isReady()) {
+    err.textContent = "Firebase ready nahi. Internet check karo.";
     err.style.display = "block";
     return;
   }
 
-  // 1. Firebase Auth (primary)
-  if (window.SMSync && window.SMSync.isConfigured() && window.SMSync.isReady()) {
-    try {
-      const user = await SMSync.signIn(u, p);
-      state.user = { name: user.displayName || u.split("@")[0], role: "admin", email: u, firebase: true, uid: user.uid };
-      SMSync.pullAll().catch(console.warn);
-      await DB.put("settings", { id: "session", user: state.user });
-      await logAudit("login", state.user.name + " logged in");
-      location.hash = "#/dashboard";
-      router();
-      return;
-    } catch (e) {
-      // fall through to staff PIN only if not an email-looking login
-      if (u.includes("@")) {
-        err.textContent = (e.code === "auth/user-not-found" || e.code === "auth/wrong-password" || e.code === "auth/invalid-credential")
-          ? "Invalid email or password."
-          : (e.message || "Login failed");
-        err.style.display = "block";
-        return;
-      }
-    }
-  }
-
-  // 2. Staff PIN (local fallback — phone/name + PIN)
-  const staffList = await DB.getAll("staff");
-  const match = staffList.find((s) => (s.phone === u || s.name === u) && String(s.pin) === p);
-  if (match) {
-    state.user = { name: match.name, role: match.role || "staff", staffId: match.id };
+  try {
+    const user = await SMSync.signIn(u, p);
+    state.user = {
+      name: user.displayName || u.split("@")[0],
+      role: "admin",
+      email: u,
+      firebase: true,
+      uid: user.uid
+    };
     await DB.put("settings", { id: "session", user: state.user });
     await logAudit("login", state.user.name + " logged in");
+    SMSync.pullAll().catch(console.warn);
     location.hash = "#/dashboard";
     router();
-    return;
+  } catch (e) {
+    const code = e.code || "";
+    let msg = e.message || "Login failed";
+    if (code === "auth/user-not-found" || code === "auth/wrong-password" || code === "auth/invalid-credential") {
+      msg = "Email ya password ghalat hai.";
+    } else if (code === "auth/network-request-failed" || !navigator.onLine) {
+      msg = "Internet nahi. Offline me sirf pehle wala session chalega.";
+    } else if (code === "auth/too-many-requests") {
+      msg = "Bohat attempts. Thodi der baad try karo.";
+    } else if (code === "auth/invalid-email") {
+      msg = "Email format ghalat hai.";
+    }
+    err.textContent = msg;
+    err.style.display = "block";
   }
-
-  err.textContent = window.SMSync && window.SMSync.isReady()
-    ? "Invalid email or password."
-    : "Firebase not ready. Check internet.";
-  err.style.display = "block";
 }
 
 async function logAudit(action, detail) {
@@ -167,8 +145,24 @@ async function logAudit(action, detail) {
 }
 
 async function tryRestoreSession() {
+  // 1) Local session (works offline after first login)
   const s = await DB.get("settings", "session");
   if (s && s.user) state.user = s.user;
+
+  // 2) If Firebase Auth still has a user (persisted), prefer that
+  if (window.SMSync && window.SMSync.isReady()) {
+    const fu = SMSync.currentUser();
+    if (fu) {
+      state.user = {
+        name: fu.displayName || (fu.email || "").split("@")[0] || "User",
+        role: (state.user && state.user.role) || "admin",
+        email: fu.email,
+        firebase: true,
+        uid: fu.uid
+      };
+      await DB.put("settings", { id: "session", user: state.user });
+    }
+  }
 }
 
 // ---------- Shell (topbar + bottomnav) wrapper ----------
