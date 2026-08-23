@@ -59,19 +59,22 @@ async function router() {
 window.addEventListener("hashchange", router);
 
 // ---------- Login ----------
-// Firebase Auth only — no demo user. Offline: restored session works after first online login.
+// DEMO credentials — change these before going live, or wire up Firebase Auth
+// later (see js/firebase-sync.js). Staff added in the Staff module can also
+// log in with their own PIN once created.
+const DEMO_ADMIN = { username: "admin", password: "admin123", name: "Admin", role: "admin" };
+
 function renderLogin() {
-  const fbReady = window.SMSync && window.SMSync.isConfigured();
   root.innerHTML = `
   <div class="login-screen">
-    <img src="icons/icon-512.png" class="login-logo" alt="logo" onerror="this.style.display='none'" />
+    <img src="icons/icon-512.png" class="login-logo" alt="logo" />
     <div class="login-title">SANAULLAH</div>
     <div class="login-sub">MOBILE COMMUNICATION</div>
-    <div class="field"><input id="li-user" type="email" placeholder="Email" autocomplete="username" /></div>
-    <div class="field"><input id="li-pass" type="password" placeholder="Password" autocomplete="current-password" /></div>
+    <div class="field"><input id="li-user" placeholder="Email or Phone" /></div>
+    <div class="field"><input id="li-pass" type="password" placeholder="Password" /></div>
     <div id="li-error" style="color:#f87171;font-size:12px;margin:-4px 0 10px;display:none"></div>
     <button class="btn-primary" id="li-btn">LOGIN</button>
-    <div style="color:var(--muted);font-size:12px;margin-top:14px">${fbReady ? (navigator.onLine ? "🟢 Online · Firebase Auth" : "🟠 Offline · pehle se login session chalega") : "⚠️ Firebase config missing"}</div>
+    <div style="color:var(--muted);font-size:12px;margin-top:10px">Demo login — Username: <b>admin</b> · Password: <b>admin123</b></div>
     <div style="color:var(--muted);font-size:10px;margin-top:18px">Software by Fazal Khan Chandio · 03333909816</div>
   </div>`;
   document.getElementById("li-btn").onclick = doLogin;
@@ -82,62 +85,26 @@ async function doLogin() {
   const u = document.getElementById("li-user").value.trim();
   const p = document.getElementById("li-pass").value.trim();
   const err = document.getElementById("li-error");
-  err.style.display = "none";
 
-  if (!u || !p) {
-    err.textContent = "Email aur password likho.";
-    err.style.display = "block";
-    return;
-  }
-  if (!u.includes("@")) {
-    err.textContent = "Valid email address use karo.";
-    err.style.display = "block";
-    return;
-  }
-  if (!window.SMSync || !window.SMSync.isConfigured()) {
-    err.textContent = "Firebase configured nahi hai.";
-    err.style.display = "block";
-    return;
-  }
-  if (!window.SMSync.isReady()) {
-    // wait briefly for SDK init
-    await new Promise((r) => setTimeout(r, 800));
-  }
-  if (!window.SMSync.isReady()) {
-    err.textContent = "Firebase ready nahi. Internet check karo.";
-    err.style.display = "block";
-    return;
-  }
-
-  try {
-    const user = await SMSync.signIn(u, p);
-    state.user = {
-      name: user.displayName || u.split("@")[0],
-      role: "admin",
-      email: u,
-      firebase: true,
-      uid: user.uid
-    };
-    await DB.put("settings", { id: "session", user: state.user });
-    await logAudit("login", state.user.name + " logged in");
-    SMSync.pullAll().catch(console.warn);
-    location.hash = "#/dashboard";
-    router();
-  } catch (e) {
-    const code = e.code || "";
-    let msg = e.message || "Login failed";
-    if (code === "auth/user-not-found" || code === "auth/wrong-password" || code === "auth/invalid-credential") {
-      msg = "Email ya password ghalat hai.";
-    } else if (code === "auth/network-request-failed" || !navigator.onLine) {
-      msg = "Internet nahi. Offline me sirf pehle wala session chalega.";
-    } else if (code === "auth/too-many-requests") {
-      msg = "Bohat attempts. Thodi der baad try karo.";
-    } else if (code === "auth/invalid-email") {
-      msg = "Email format ghalat hai.";
+  // 1. Check demo admin
+  if (u.toLowerCase() === DEMO_ADMIN.username && p === DEMO_ADMIN.password) {
+    state.user = { name: DEMO_ADMIN.name, role: "admin" };
+  } else {
+    // 2. Check staff records (username = phone, password = pin)
+    const staffList = await DB.getAll("staff");
+    const match = staffList.find((s) => (s.phone === u || s.name === u) && String(s.pin) === p);
+    if (match) {
+      state.user = { name: match.name, role: match.role || "staff", staffId: match.id };
+    } else {
+      err.textContent = "Invalid username or password.";
+      err.style.display = "block";
+      return;
     }
-    err.textContent = msg;
-    err.style.display = "block";
   }
+  await DB.put("settings", { id: "session", user: state.user });
+  await logAudit("login", state.user.name + " logged in");
+  location.hash = "#/dashboard";
+  router();
 }
 
 async function logAudit(action, detail) {
@@ -145,24 +112,8 @@ async function logAudit(action, detail) {
 }
 
 async function tryRestoreSession() {
-  // 1) Local session (works offline after first login)
   const s = await DB.get("settings", "session");
   if (s && s.user) state.user = s.user;
-
-  // 2) If Firebase Auth still has a user (persisted), prefer that
-  if (window.SMSync && window.SMSync.isReady()) {
-    const fu = SMSync.currentUser();
-    if (fu) {
-      state.user = {
-        name: fu.displayName || (fu.email || "").split("@")[0] || "User",
-        role: (state.user && state.user.role) || "admin",
-        email: fu.email,
-        firebase: true,
-        uid: fu.uid
-      };
-      await DB.put("settings", { id: "session", user: state.user });
-    }
-  }
 }
 
 // ---------- Shell (topbar + bottomnav) wrapper ----------
@@ -252,15 +203,9 @@ async function renderPOS() {
   <div class="page">
     <h2>POS / Billing</h2>
     <div class="card">
-      <div class="form-row"><label>Saved Customer (optional)</label>
-        <select id="pos-cust">
-          <option value="">— Select to auto-fill —</option>
-          ${customers.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}${c.phone ? " (" + escapeHtml(c.phone) + ")" : ""}</option>`).join("")}
-        </select></div>
-      <div class="form-row"><label>Customer Name *</label>
-        <input id="pos-cust-name" type="text" placeholder="Name type karo…" autocomplete="off" /></div>
-      <div class="form-row"><label>Phone</label>
-        <input id="pos-cust-phone" type="tel" placeholder="03xx…" autocomplete="off" /></div>
+      <div class="form-row"><label>Customer</label>
+        <select id="pos-cust"><option value="">Walk-in Customer</option>
+          ${customers.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("")}</select></div>
       <div class="form-row"><label>Add Product</label>
         <div style="display:flex;gap:8px">
           <select id="pos-product" style="flex:1">
@@ -269,6 +214,7 @@ async function renderPOS() {
           </select>
           <button class="icon-btn" id="pos-scan" title="Scan barcode">📷</button>
         </div></div>
+      <button class="btn full" id="pos-add">Add to Cart</button>
     </div>
     <div class="card" id="pos-cart"></div>
     <div class="card">
@@ -280,52 +226,35 @@ async function renderPOS() {
   </div>`;
   root.innerHTML = shell("pos", html);
   renderCart();
-
-  // Select only auto-fills name/phone — user can still edit freely
-  document.getElementById("pos-cust").onchange = () => {
-    const id = document.getElementById("pos-cust").value;
-    const c = customers.find((x) => x.id === id);
-    if (c) {
-      document.getElementById("pos-cust-name").value = c.name || "";
-      document.getElementById("pos-cust-phone").value = c.phone || "";
-    }
-  };
-
-  const addProductById = (id) => {
+  document.getElementById("pos-add").onclick = () => {
+    const id = document.getElementById("pos-product").value;
     const p = products.find((x) => x.id === id);
     if (!p) return;
     const existing = cart.find((c) => c.id === id);
-    if (existing) existing.qty += 1;
-    else cart.push({ id: p.id, name: p.name, price: Number(p.salePrice), cost: Number(p.costPrice || 0), qty: 1 });
+    if (existing) existing.qty += 1; else cart.push({ id: p.id, name: p.name, price: Number(p.salePrice), cost: Number(p.costPrice || 0), qty: 1 });
     renderCart();
-    toast(p.name + " added");
   };
-
-  document.getElementById("pos-product").onchange = () => {
-    const id = document.getElementById("pos-product").value;
-    if (!id) return;
-    addProductById(id);
-    document.getElementById("pos-product").value = "";
-  };
-
   document.getElementById("pos-checkout").onclick = () => checkout(products, customers);
   document.getElementById("pos-scan").onclick = () => openBarcodeScanner((code) => {
-    const match = products.find((p) => p.imei === code || p.id === code || (p.name && p.name.toLowerCase() === code.toLowerCase()));
-    if (match) addProductById(match.id);
-    else toast("No product found for that code");
+    const match = products.find((p) => p.imei === code || p.id === code || p.name.toLowerCase() === code.toLowerCase());
+    if (match) {
+      const existing = cart.find((c) => c.id === match.id);
+      if (existing) existing.qty += 1; else cart.push({ id: match.id, name: match.name, price: Number(match.salePrice), cost: Number(match.costPrice || 0), qty: 1 });
+      renderCart();
+      toast("Added " + match.name);
+    } else toast("No product found for that code");
   });
 }
 function renderCart() {
   const el = document.getElementById("pos-cart");
-  if (!el) return;
   if (!cart.length) { el.innerHTML = `<div class="empty">Cart is empty</div>`; return; }
   const total = cart.reduce((a, c) => a + c.price * c.qty, 0);
   el.innerHTML = cart.map((c, i) => `
     <div class="list-row" style="padding:8px 0">
       <div class="l-left"><div><div class="l-title">${escapeHtml(c.name)}</div><div class="l-sub">${fmt(c.price)} × ${c.qty}</div></div></div>
       <div style="display:flex;align-items:center;gap:8px">
-        <button type="button" class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},-1)">−</button>
-        <button type="button" class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},1)">+</button>
+        <button class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},-1)">−</button>
+        <button class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},1)">+</button>
       </div>
     </div>`).join("") + `<div style="text-align:right;font-weight:700;margin-top:8px">Total: ${fmt(total)}</div>`;
 }
@@ -335,19 +264,14 @@ async function checkout(products, customers) {
   if (!cart.length) { toast("Cart is empty"); return; }
   const custId = document.getElementById("pos-cust").value;
   const cust = customers.find((c) => c.id === custId);
-  const manualName = (document.getElementById("pos-cust-name")?.value || "").trim();
-  const manualPhone = (document.getElementById("pos-cust-phone")?.value || "").trim();
   const discount = Number(document.getElementById("pos-discount").value || 0);
   const payment = document.getElementById("pos-payment").value;
   const subtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
   const total = Math.max(0, subtotal - discount);
   const profit = cart.reduce((a, c) => a + (c.price - c.cost) * c.qty, 0) - discount;
   const invoiceNo = "INV-" + (10000 + (await DB.getAll("sales")).length + 1);
-  const customerName = manualName || (cust ? cust.name : "Walk-in Customer");
-  const customerPhone = manualPhone || (cust ? (cust.phone || "") : "");
-  const sale = { invoiceNo, customerId: custId || null, customerName, customerPhone,
-    items: cart.map((c) => ({ id: c.id, name: c.name, price: c.price, cost: c.cost, qty: c.qty })),
-    subtotal, discount, total, profit, payment, date: new Date().toISOString() };
+  const sale = { invoiceNo, customerId: custId || null, customerName: cust ? cust.name : "Walk-in Customer",
+    customerPhone: cust ? cust.phone : "", items: cart, subtotal, discount, total, profit, payment, date: new Date().toISOString() };
   await DB.put("sales", sale);
   for (const item of cart) {
     const p = products.find((x) => x.id === item.id);
@@ -395,7 +319,8 @@ function showInvoice(sale) {
   </div>
   </div>
   <div class="no-print" style="position:fixed;bottom:24px;left:0;right:0;display:flex;gap:10px;justify-content:center;padding:0 20px;flex-wrap:wrap">
-    <button class="btn" id="thermal-print-btn">🖨️ Thermal Print</button>
+    <button class="btn" id="thermal-print-btn">🖨️ Browser Print</button>
+    <button class="btn" id="thermal-bt-btn" style="background:#0891b2">📶 Bluetooth/USB Print</button>
     ${sale.customerPhone ? `<a class="btn" style="background:#25D366;text-decoration:none" target="_blank" href="https://wa.me/${sale.customerPhone.replace(/\D/g, "")}?text=${waText}">WhatsApp</a>` : ""}
     <button class="btn ghost" id="invoice-close">Close</button>
   </div>`;
@@ -403,76 +328,35 @@ function showInvoice(sale) {
   if (typeof QRCode !== "undefined") {
     new QRCode(document.getElementById("qr-code"), { text: qrPayload, width: 90, height: 90, correctLevel: QRCode.CorrectLevel.M });
   }
-  document.getElementById("thermal-print-btn").onclick = async () => {
-    try {
-      await printSaleThermal(sale);
-    } catch (e) {
-      console.error(e);
-      toast(e.message || "Print failed");
-    }
-  };
+  document.getElementById("thermal-print-btn").onclick = () => window.print();
+  const btBtn = document.getElementById("thermal-bt-btn");
+  if (btBtn) btBtn.onclick = () => printSaleViaThermal(sale, qrPayload);
   document.getElementById("invoice-close").onclick = () => { overlay.remove(); location.hash = "#/dashboard"; };
 }
 
-/** ESC/POS thermal print for POS invoice (Bluetooth / USB) */
-async function printSaleThermal(sale) {
-  if (typeof ThermalPrinter === "undefined") {
-    toast("Printer library missing");
-    return;
+async function printSaleViaThermal(sale, qrPayload) {
+  if (typeof window.shopPrinter === "undefined") { toast("Printer driver not loaded"); return; }
+  try {
+    if (!window.shopPrinter.isConnected) {
+      toast("Connecting to printer…");
+      await window.shopPrinter.connect();
+    }
+    await window.shopPrinter.printSaleReceipt({
+      invoiceNo: sale.invoiceNo, customerName: sale.customerName, customerPhone: sale.customerPhone,
+      date: sale.date, items: sale.items, subtotal: sale.subtotal, discount: sale.discount,
+      total: sale.total, payment: sale.payment, qrText: qrPayload
+    });
+    toast("Printed to thermal printer");
+  } catch (err) {
+    toast("Printer error: " + err.message);
   }
-  const printer = window.shopPrinter || new ThermalPrinter({ paperWidth: 80, chunkSize: 48, chunkDelay: 40, feedBeforeCut: 1, usePartialCut: true });
-  window.shopPrinter = printer;
-
-  if (!printer.isConnected) {
-    toast("Printer connect karo…");
-    const name = await printer.connect();
-    toast("Connected: " + name);
-  }
-
-  printer.setSettings({ paperWidth: 80 }); // shop receipts usually 80mm
-  const w = printer.charsPerLine;
-  const line = "-".repeat(Math.min(w, 42));
-  const thick = "=".repeat(Math.min(w, 42));
-
-  await printer.init();
-  await printer.printText("SANAULLAH MOBILE", { align: "center", bold: true });
-  await printer.printText("COMMUNICATION", { align: "center", bold: true });
-  await printer.printText("Sales · Accessories · Repairs", { align: "center" });
-  await printer.printText(line, { align: "center" });
-  await printer.printText("Invoice #" + (sale.invoiceNo || ""));
-  await printer.printText("Customer: " + (sale.customerName || "Walk-in"));
-  if (sale.customerPhone) await printer.printText("Phone: " + sale.customerPhone);
-  await printer.printText("Date: " + new Date(sale.date).toLocaleString());
-  await printer.printText(line, { align: "center" });
-
-  for (const item of (sale.items || [])) {
-    const name = String(item.name || "").slice(0, w - 10);
-    const amt = "Rs " + Number(item.price * item.qty).toLocaleString("en-PK");
-    await printer.printText(name + " x" + item.qty);
-    await printer.printText(amt, { align: "right" });
-  }
-
-  await printer.printText(line, { align: "center" });
-  await printer.printText("Subtotal: Rs " + Number(sale.subtotal || 0).toLocaleString("en-PK"));
-  if (sale.discount) await printer.printText("Discount: -Rs " + Number(sale.discount).toLocaleString("en-PK"));
-  await printer.printText(thick, { align: "center" });
-  await printer.printText("TOTAL: Rs " + Number(sale.total || 0).toLocaleString("en-PK"), { bold: true });
-  await printer.printText("Payment: " + (sale.payment || "Cash"));
-  await printer.printText(line, { align: "center" });
-  await printer.printText("Thank you for your business!", { align: "center" });
-  await printer.printSmall("Software by Fazal Khan Chandio", { align: "center" });
-  await printer.printSmall("03333909816", { align: "center" });
-  await printer.feed(printer.feedBeforeCut || 1);
-  await printer.doCut();
-  toast("Printed");
 }
-
 
 // ---------- Generic list-page builder for simple CRUD modules ----------
 function moduleListPage(opts) {
   // opts: {title, store, activeTab, fields[], renderRow(item), emptyText}
   return async function render() {
-    const items = (await DB.getAll(opts.store)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const items = (await DB.getAll(opts.store)).sort((a, b) => b.updatedAt - a.updatedAt);
     const html = `
     <div class="page">
       <h2>${opts.title}</h2>
@@ -793,20 +677,19 @@ async function renderSettings() {
         </select></div>
     </div>
     <div class="card">
-      <div class="l-title" style="margin-bottom:6px">Firebase Sync</div>
-      <div class="l-sub" style="margin-bottom:8px">${window.SMSync && window.SMSync.isReady() && window.SMSync.currentUser()
-        ? "🟢 Signed in — sync every 3s + realtime."
-        : window.SMSync && window.SMSync.isReady()
-          ? "🟡 Firebase ready — login with Firebase email for cloud sync."
-          : "⚪ Firebase not ready."}</div>
-      <button class="btn full" id="sync-now" style="margin-bottom:8px">🔄 Sync Now</button>
-      <button class="btn full ghost" id="sync-clear">Clear pending queue</button>
+      <div class="l-title" style="margin-bottom:6px">Thermal Printer</div>
+      <div class="l-sub" id="printer-status" style="margin-bottom:10px">${window.shopPrinter && window.shopPrinter.isConnected ? "🟢 Connected (" + window.shopPrinter.connectionType + ")" : "⚪ Not connected"}</div>
+      <div class="form-row"><label>Paper Width</label>
+        <select id="printer-paper">
+          <option value="58" ${window.shopPrinter && window.shopPrinter.paperWidth === 58 ? "selected" : ""}>58mm</option>
+          <option value="80" ${window.shopPrinter && window.shopPrinter.paperWidth === 80 ? "selected" : ""}>80mm</option>
+        </select></div>
+      <button class="btn full" id="printer-connect" style="margin-bottom:8px">📶 Connect Printer (Bluetooth/USB)</button>
+      <button class="btn full ghost" id="printer-test">🖨️ Print Test Receipt</button>
     </div>
     <div class="card">
-      <div class="l-title" style="margin-bottom:6px">Thermal Printer</div>
-      <div class="l-sub" style="margin-bottom:8px" id="printer-status">${window.shopPrinter && window.shopPrinter.isConnected ? "🟢 Printer connected" : "⚪ Not connected (Bluetooth / USB)"}</div>
-      <button class="btn full" id="printer-connect" style="margin-bottom:8px">🔌 Connect Printer</button>
-      <button class="btn full ghost" id="printer-test">Test Print</button>
+      <div class="l-title" style="margin-bottom:6px">Firebase Sync</div>
+      <div class="l-sub">${window.SMSync && window.SMSync.isReady() ? "🟢 Signed in — data syncs to the cloud in real time." : "⚪ Not configured yet. Add your Firebase config + rules (see firestore.rules) to enable secure real-time cloud sync."}</div>
     </div>
     ${state.user.role === "admin" ? `
     <div class="card">
@@ -832,6 +715,28 @@ async function renderSettings() {
     <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:16px">Software by Fazal Khan Chandio · 03333909816</div>
   </div>`;
   root.innerHTML = shell("settings", html);
+  const printerPaper = document.getElementById("printer-paper");
+  if (printerPaper) printerPaper.onchange = (e) => {
+    if (window.shopPrinter) window.shopPrinter.setSettings({ paperWidth: Number(e.target.value) });
+  };
+  const printerConnect = document.getElementById("printer-connect");
+  if (printerConnect) printerConnect.onclick = async () => {
+    if (typeof window.shopPrinter === "undefined") { toast("Printer driver not loaded"); return; }
+    try {
+      const name = await window.shopPrinter.connect();
+      toast("Connected: " + name);
+      document.getElementById("printer-status").textContent = "🟢 Connected (" + window.shopPrinter.connectionType + ")";
+    } catch (err) { toast(err.message || "Connection failed"); }
+  };
+  const printerTest = document.getElementById("printer-test");
+  if (printerTest) printerTest.onclick = async () => {
+    if (typeof window.shopPrinter === "undefined") { toast("Printer driver not loaded"); return; }
+    try {
+      if (!window.shopPrinter.isConnected) await window.shopPrinter.connect();
+      await window.shopPrinter.printTest();
+      toast("Test receipt sent");
+    } catch (err) { toast(err.message || "Print failed"); }
+  };
   document.getElementById("set-branch-save").onclick = async () => {
     await DB.put("settings", { id: "shop", branch: document.getElementById("set-branch").value });
     toast("Branch saved");
@@ -843,52 +748,10 @@ async function renderSettings() {
   };
   document.getElementById("set-logout").onclick = async () => {
     await logAudit("logout", state.user.name + " logged out");
-    if (window.SMSync && window.SMSync.currentUser()) {
-      try { await SMSync.signOut(); } catch (e) { console.warn(e); }
-    }
     state.user = null;
     await DB.remove("settings", "session");
     location.hash = "";
     router();
-  };
-  const pConn = document.getElementById("printer-connect");
-  const pTest = document.getElementById("printer-test");
-  if (pConn) pConn.onclick = async () => {
-    try {
-      if (typeof ThermalPrinter === "undefined") { toast("Printer lib missing"); return; }
-      if (!window.shopPrinter) window.shopPrinter = new ThermalPrinter({ paperWidth: 80, debug: false });
-      const name = await window.shopPrinter.connect();
-      const st = document.getElementById("printer-status");
-      if (st) st.textContent = "🟢 " + name;
-      toast("Connected: " + name);
-    } catch (e) { toast(e.message || "Connect failed"); }
-  };
-  if (pTest) pTest.onclick = async () => {
-    try {
-      if (!window.shopPrinter || !window.shopPrinter.isConnected) {
-        toast("Pehle Connect Printer karo");
-        return;
-      }
-      await window.shopPrinter.printTest();
-      toast("Test printed");
-    } catch (e) { toast(e.message || "Test failed"); }
-  };
-  const syncNow = document.getElementById("sync-now");
-  const syncClear = document.getElementById("sync-clear");
-  if (syncNow) syncNow.onclick = async () => {
-    if (!window.SMSync || !SMSync.currentUser()) { toast("Firebase email se login karo"); return; }
-    toast("Syncing…");
-    await SMSync.flushQueue();
-    window._pendingCount = await DB.pendingSyncCount();
-    updateSyncStatusBar();
-    toast(window._pendingCount ? (window._pendingCount + " still pending") : "Synced");
-  };
-  if (syncClear) syncClear.onclick = async () => {
-    if (!confirm("Pending queue clear? Local data safe rahega.")) return;
-    await SMSync.clearPending();
-    window._pendingCount = 0;
-    updateSyncStatusBar();
-    toast("Queue cleared");
   };
   const csvInput = document.getElementById("csv-import");
   if (csvInput) csvInput.onchange = (e) => importProductsCSV(e.target.files[0]);
@@ -1045,25 +908,10 @@ async function renderAuditLogs() {
 }
 
 // ---------- Boot ----------
-window.addEventListener("sm:queued", async () => {
-  window._pendingCount = await DB.pendingSyncCount();
-  updateSyncStatusBar();
-});
-window.addEventListener("sm:synced", async () => {
-  window._pendingCount = await DB.pendingSyncCount();
-  updateSyncStatusBar(); // do NOT router() — it wipes POS form inputs
-});
-window.addEventListener("online", () => updateSyncStatusBar());
-window.addEventListener("offline", () => updateSyncStatusBar());
-
-function updateSyncStatusBar() {
-  const el = document.querySelector(".sync-status");
-  if (!el || !state.user) return;
-  const pending = window._pendingCount || 0;
-  el.textContent = (navigator.onLine ? "🟢 Online" : "🟠 Offline")
-    + (pending ? " · " + pending + " pending sync" : " · synced")
-    + " · " + (state.user.role || "admin");
-}
+window.addEventListener("sm:queued", async () => { window._pendingCount = await DB.pendingSyncCount(); });
+window.addEventListener("sm:synced", async () => { window._pendingCount = await DB.pendingSyncCount(); router(); });
+window.addEventListener("online", () => router());
+window.addEventListener("offline", () => router());
 
 (async function boot() {
   await tryRestoreSession();

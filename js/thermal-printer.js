@@ -1,9 +1,10 @@
 /**
  * thermal-printer.js
- * Generic ESC/POS Thermal Printer for School PWA
+ * Generic ESC/POS Thermal Printer — Sanaullah Mobile Communication
  * Supports: Web Bluetooth + WebUSB (USB port)
  * Works with most HiLabel, SpeedX, Xprinter, Rongta, Epson TM, etc.
- * The Smart Modern Public School Qamber
+ * Loaded as a plain <script> (no ES module "export") so it works from
+ * index.html without type="module".
  */
 
 class ThermalPrinter {
@@ -466,64 +467,68 @@ class ThermalPrinter {
     return L + '\n' + V;
   }
 
-  async printFeeReceipt(data) {
-    // Paper width se charsPerLine auto set (58mm=32, 80mm=48)
+  /** Render text into a QR code image (via the QRCode.js CDN lib already
+   *  loaded in index.html) and print it as a raster image — same technique
+   *  as printLogo(). No-ops quietly if the library isn't loaded. */
+  async printQRCode(text, size = 160) {
+    if (typeof QRCode === 'undefined') { this.log('QRCode lib not loaded'); return; }
+    const holder = document.createElement('div');
+    holder.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+    document.body.appendChild(holder);
+    new QRCode(holder, { text, width: size, height: size, correctLevel: QRCode.CorrectLevel.M });
+    await new Promise((r) => setTimeout(r, 80)); // let it render
+    const canvasEl = holder.querySelector('canvas');
+    const imgEl = holder.querySelector('img');
+    const dataUrl = canvasEl ? canvasEl.toDataURL('image/png') : (imgEl ? imgEl.src : null);
+    document.body.removeChild(holder);
+    if (dataUrl) await this.printLogo(dataUrl, this.paperWidth <= 58 ? 160 : 220);
+  }
+
+  /** Print a shop sale invoice as an 80mm/58mm thermal receipt. */
+  async printSaleReceipt(data) {
     this.charsPerLine = this.paperWidth <= 58 ? 32 : 48;
     const w = this.charsPerLine;
-    const border = '+' + '-'.repeat(Math.max(w - 2, 8)) + '+';
-    const dots   = '.'.repeat(w);
-    const thick  = '='.repeat(w);
+    const dots = '.'.repeat(w);
+    const thick = '='.repeat(w);
     await this.init();
 
-    // BLACK CARD BORDER (screen rounded border → black box)
-    await this.printText(border, { align: 'left' });
-
-    // 1. Logo
     if (data.logoBase64) {
       await this.printLogo(data.logoBase64, this.paperWidth <= 58 ? 144 : 200);
     }
 
-    // 2. STUDENT COPY (gold badge → black)
-    await this.printSmall('[ STUDENT COPY ]', { align: 'center' });
-
-    // 3. School name
-    await this.printText('The Smart Modern', { align: 'center', bold: true });
-    await this.printText('Public School', { align: 'center', bold: true });
-
-    // 4. FEE RECEIPT (gold → black bold) + phone
-    await this.printText('FEE RECEIPT - QAMBER', { align: 'center', bold: true });
-    await this.printText('03362506588', { align: 'center' });
+    await this.printText('SANAULLAH MOBILE', { align: 'center', bold: true });
+    await this.printText('COMMUNICATION', { align: 'center', bold: true });
+    await this.printSmall('Sales - Accessories - Repairs - Service', { align: 'center' });
     await this.printText(dots, { align: 'center' });
 
-    // 5. Fields
-    const rows = [
-      ['Student Name', data.studentName || '—'],
-      ['Class / Section', data.className || '—'],
-      ['Admission No.', data.admNo || '—'],
-      ['Fee Month', data.month || '—'],
-      ['Due Date', data.date || '—'],
-      ['Status', (data.status || 'Paid').toUpperCase()]
-    ];
-    for (const [lab, val] of rows) {
-      const text = this._row(lab, val);
-      if (text.includes('\n')) {
-        await this.printText(lab);
-        await this.printText(val, { bold: lab === 'Student Name' });
-      } else {
-        await this.printText(text, { bold: lab === 'Student Name' });
-      }
+    await this.printText(this._row('Invoice#', data.invoiceNo || '-'));
+    await this.printText(this._row('Customer', data.customerName || 'Walk-in'));
+    if (data.customerPhone) await this.printText(this._row('Phone', data.customerPhone));
+    await this.printText(this._row('Date', data.date ? new Date(data.date).toLocaleString() : '-'));
+    await this.printText(dots, { align: 'center' });
+
+    for (const item of (data.items || [])) {
+      await this.printText(String(item.name).slice(0, w));
+      await this.printText(this._row(`  ${item.qty} x ${item.price}`, String(item.qty * item.price)));
+    }
+    await this.printText(dots, { align: 'center' });
+
+    await this.printText(this._row('Subtotal', 'Rs ' + (data.subtotal || 0)));
+    await this.printText(this._row('Discount', '-Rs ' + (data.discount || 0)));
+    await this.printText(thick, { align: 'center' });
+    await this.printText(this._row('TOTAL', 'Rs ' + (data.total || 0)), { bold: true, double: true });
+    await this.printText(dots, { align: 'center' });
+    await this.printText(this._row('Payment', data.payment || 'Cash'));
+
+    if (data.qrText) {
+      await this.printText(' ');
+      await this.printQRCode(data.qrText, this.paperWidth <= 58 ? 140 : 180);
     }
 
-    // 6. Total
-    await this.printText(thick, { align: 'center' });
-    await this.printText(this._row('Total Amount', 'Rs. ' + (data.amount || 0)), { bold: true });
-    await this.printText(dots, { align: 'center' });
-
-    // 7. Credit
-    await this.printSmall('Software by Fazul Khan Chandio', { align: 'center' });
-
-    // BOTTOM BORDER
-    await this.printText(border, { align: 'left' });
+    await this.printText(' ');
+    await this.printText('Thank you for your business!', { align: 'center' });
+    await this.printSmall('Software by Fazal Khan Chandio', { align: 'center' });
+    await this.printSmall('03333909816', { align: 'center' });
 
     await this.feed(this.feedBeforeCut);
     await this.doCut();
@@ -538,7 +543,7 @@ class ThermalPrinter {
     await this.printText(this.connectionType === 'usb' ? 'USB Connection' : 'Bluetooth', { align: 'center' });
     await this.printText(new Date().toLocaleString(), { align: 'center' });
     await this.printText(line, { align: 'center' });
-    await this.printSmall('Software by Fazul Khan Chandio', { align: 'center' });
+    await this.printSmall('Software by Fazal Khan Chandio', { align: 'center' });
     await this.feed(this.feedBeforeCut);
     await this.doCut();
   }
@@ -548,7 +553,7 @@ class ThermalPrinter {
 window.ThermalPrinter = ThermalPrinter;
 window.shopPrinter = new ThermalPrinter({
   debug: true,
-  paperWidth: 58,        // 58mm paper (HiLabel)
+  paperWidth: 58,        // 58mm paper (change to 80 in Settings if you use 80mm rolls)
   chunkSize: 48,         // reliable on Bluetooth
   chunkDelay: 40,        // ms
   feedBeforeCut: 0,      // ZERO extra feed — no blank paper
