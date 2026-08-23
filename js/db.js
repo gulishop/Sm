@@ -5,11 +5,11 @@
 */
 
 const DB_NAME = "sm-app-v2";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORES = [
   "products", "customers", "sales", "repairs", "installments",
   "suppliers", "expenses", "staff", "settings", "purchaseOrders",
-  "auditLogs", "attendance", "_syncQueue"
+  "auditLogs", "attendance", "returns", "_syncQueue"
 ];
 
 function uid() {
@@ -93,8 +93,8 @@ const DB = {
       tx.onerror = () => reject(tx.error);
     });
 
-    // Queue for cloud sync (skip internal/settings session noise if desired)
-    if (storeName !== "_syncQueue") {
+    // Queue for cloud sync — skip session + pure local noise
+    if (storeName !== "_syncQueue" && !(storeName === "settings" && rec.id === "session")) {
       await this._enqueue("put", storeName, rec);
     }
     return rec;

@@ -22,6 +22,7 @@ const routes = {
   "": () => renderDashboard(),
   "dashboard": () => renderDashboard(),
   "pos": () => renderPOS(),
+  "sales": () => renderSalesList(),
   "products": () => renderProducts(),
   "customers": () => renderCustomers(),
   "repairs": () => renderRepairs(),
@@ -34,18 +35,35 @@ const routes = {
   "purchase-orders": () => renderPurchaseOrders(),
   "cashbook": () => renderCashbook(),
   "audit-logs": () => renderAuditLogs(),
+  "returns": () => renderReturns(),
 };
 
 function can(feature) {
-  // simple role permissions: admin sees everything; cashier limited to sales+products+customers;
-  // technician limited to repairs.
   const role = state.user && state.user.role;
   if (role === "admin" || !role) return true;
-  const cashierAllowed = ["dashboard", "pos", "products", "customers", "installments", "reports", "settings"];
+  const managerAllowed = ["dashboard", "pos", "products", "customers", "installments", "repairs", "suppliers", "expenses", "reports", "returns", "settings", "purchase-orders", "cashbook"];
+  const cashierAllowed = ["dashboard", "pos", "products", "customers", "installments", "reports", "returns", "settings"];
   const techAllowed = ["dashboard", "repairs", "settings"];
+  if (role === "manager") return managerAllowed.includes(feature);
   if (role === "cashier") return cashierAllowed.includes(feature);
   if (role === "technician") return techAllowed.includes(feature);
   return true;
+}
+
+// Simple i18n
+const i18n = {
+  en: {
+    dashboard: "Dashboard", sales: "Sales", products: "Products", reports: "Reports", settings: "Settings",
+    pos: "POS / Billing", checkout: "Checkout", cartEmpty: "Cart is empty"
+  },
+  ur: {
+    dashboard: "ڈیش بورڈ", sales: "فروخت", products: "پروڈکٹس", reports: "رپورٹس", settings: "ترتیبات",
+    pos: "بلنگ", checkout: "چیک آؤٹ", cartEmpty: "کارٹ خالی ہے"
+  }
+};
+function t(key) {
+  const lang = localStorage.getItem("sm_lang") || "en";
+  return (i18n[lang] && i18n[lang][key]) || (i18n.en[key] || key);
 }
 
 async function router() {
@@ -120,7 +138,10 @@ async function doLogin() {
     };
     await DB.put("settings", { id: "session", user: state.user });
     await logAudit("login", state.user.name + " logged in");
-    SMSync.pullAll().catch(console.warn);
+    try {
+      await SMSync.clearPending();
+      await SMSync.pullAll();
+    } catch (e) { console.warn(e); }
     location.hash = "#/dashboard";
     router();
   } catch (e) {
@@ -228,13 +249,22 @@ async function renderDashboard() {
     ${qa("installments", "📅", "Installments")}
     ${qa("suppliers", "🚚", "Suppliers")}
     ${qa("expenses", "💰", "Expenses")}
+    ${qa("returns", "↩️", "Returns")}
     ${qa("reports", "📈", "Reports")}
   </div>
-  <div class="section-title" style="display:flex;justify-content:space-between">Recent Transactions <a href="#/pos" style="color:var(--blue);font-size:12px">View All</a></div>
+  <div class="section-title" style="display:flex;justify-content:space-between">Recent Transactions <a href="#/sales" style="color:var(--blue);font-size:12px">View All</a></div>
   ${recent.length ? recent.map((s) => `
-    <div class="list-row"><div class="l-left"><div class="dot" style="background:var(--blue)">🧾</div>
-      <div><div class="l-title">Invoice #${escapeHtml(s.invoiceNo || s.id)}</div><div class="l-sub">${escapeHtml(s.customerName || "Walk-in Customer")}</div></div></div>
-      <div style="text-align:right"><div class="l-title">${fmt(s.total)}</div><div class="l-sub">${(s.date || "").slice(11, 16)}</div></div></div>`).join("")
+    <div class="list-row">
+      <div class="l-left" style="flex:1;cursor:pointer" onclick='reprintInvoice("${s.id}")'>
+        <div class="dot" style="background:var(--blue)">🧾</div>
+        <div><div class="l-title">Invoice #${escapeHtml(s.invoiceNo || s.id)}</div>
+        <div class="l-sub">${escapeHtml(s.customerName || "Walk-in Customer")}</div></div>
+      </div>
+      <div style="text-align:right">
+        <div class="l-title">${fmt(s.total)}</div>
+        <button class="btn ghost" style="padding:4px 10px;margin-top:4px;font-size:11px" onclick='event.stopPropagation();reprintInvoice("${s.id}")'>🖨️ Print</button>
+      </div>
+    </div>`).join("")
     : `<div class="empty">No sales yet. Tap POS / Billing to create your first invoice.</div>`}
   `;
   root.innerHTML = shell("dashboard", html);
@@ -245,6 +275,50 @@ function qa(route, icon, label) {
 
 // ---------- POS / Billing ----------
 let cart = [];
+
+// ---------- Sales list + duplicate invoice print ----------
+async function renderSalesList() {
+  const sales = (await DB.getAll("sales")).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const html = `
+  <div class="page">
+    <h2>All Sales / Invoices</h2>
+    <div class="search-bar">
+      <input id="sales-search" placeholder="Search invoice, customer…" />
+    </div>
+    <div id="sales-list">
+      ${sales.length ? sales.map(salesRow).join("") : `<div class="empty">No sales yet.</div>`}
+    </div>
+  </div>`;
+  root.innerHTML = shell("pos", html);
+  document.getElementById("sales-search").oninput = (e) => {
+    const q = e.target.value.toLowerCase();
+    const filtered = sales.filter((s) => JSON.stringify(s).toLowerCase().includes(q));
+    document.getElementById("sales-list").innerHTML = filtered.length
+      ? filtered.map(salesRow).join("")
+      : `<div class="empty">No matches</div>`;
+  };
+}
+function salesRow(s) {
+  return `<div class="list-row">
+    <div class="l-left" style="flex:1">
+      <div class="dot" style="background:var(--blue)">🧾</div>
+      <div>
+        <div class="l-title">#${escapeHtml(s.invoiceNo || s.id)}</div>
+        <div class="l-sub">${escapeHtml(s.customerName || "Walk-in")} · ${(s.date || "").slice(0, 16).replace("T", " ")}</div>
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div class="l-title">${fmt(s.total)}</div>
+      <button class="btn ghost" style="padding:4px 10px;margin-top:4px;font-size:11px" onclick='reprintInvoice("${s.id}")'>🖨️ Duplicate</button>
+    </div>
+  </div>`;
+}
+window.reprintInvoice = async (id) => {
+  const sale = await DB.get("sales", id);
+  if (!sale) { toast("Invoice not found"); return; }
+  showInvoice({ ...sale, _duplicate: true }, { duplicate: true });
+};
+
 async function renderPOS() {
   const products = await DB.getAll("products");
   const customers = await DB.getAll("customers");
@@ -252,13 +326,15 @@ async function renderPOS() {
   <div class="page">
     <h2>POS / Billing</h2>
     <div class="card">
-      <div class="form-row"><label>Customer</label>
+      <div class="form-row"><label>Saved Customer (optional)</label>
         <select id="pos-cust">
-          <option value="">— Select saved customer —</option>
+          <option value="">— Select to auto-fill —</option>
           ${customers.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}${c.phone ? " (" + escapeHtml(c.phone) + ")" : ""}</option>`).join("")}
         </select></div>
-      <div class="form-row"><label>Customer Name (manual)</label>
-        <input id="pos-cust-name" type="text" placeholder="Walk-in name type karo…" /></div>
+      <div class="form-row"><label>Customer Name *</label>
+        <input id="pos-cust-name" type="text" placeholder="Name type karo…" autocomplete="off" /></div>
+      <div class="form-row"><label>Phone</label>
+        <input id="pos-cust-phone" type="tel" placeholder="03xx…" autocomplete="off" /></div>
       <div class="form-row"><label>Add Product</label>
         <div style="display:flex;gap:8px">
           <select id="pos-product" style="flex:1">
@@ -279,14 +355,16 @@ async function renderPOS() {
   root.innerHTML = shell("pos", html);
   renderCart();
 
-  // Saved customer → fill manual name field
+  // Select only auto-fills name/phone — user can still edit freely
   document.getElementById("pos-cust").onchange = () => {
     const id = document.getElementById("pos-cust").value;
     const c = customers.find((x) => x.id === id);
-    document.getElementById("pos-cust-name").value = c ? c.name : "";
+    if (c) {
+      document.getElementById("pos-cust-name").value = c.name || "";
+      document.getElementById("pos-cust-phone").value = c.phone || "";
+    }
   };
 
-  // Product select → auto add to cart
   const addProductById = (id) => {
     const p = products.find((x) => x.id === id);
     if (!p) return;
@@ -301,16 +379,14 @@ async function renderPOS() {
     const id = document.getElementById("pos-product").value;
     if (!id) return;
     addProductById(id);
-    // reset dropdown so same product can be selected again
     document.getElementById("pos-product").value = "";
   };
 
   document.getElementById("pos-checkout").onclick = () => checkout(products, customers);
   document.getElementById("pos-scan").onclick = () => openBarcodeScanner((code) => {
     const match = products.find((p) => p.imei === code || p.id === code || (p.name && p.name.toLowerCase() === code.toLowerCase()));
-    if (match) {
-      addProductById(match.id);
-    } else toast("No product found for that code");
+    if (match) addProductById(match.id);
+    else toast("No product found for that code");
   });
 }
 function renderCart() {
@@ -322,8 +398,8 @@ function renderCart() {
     <div class="list-row" style="padding:8px 0">
       <div class="l-left"><div><div class="l-title">${escapeHtml(c.name)}</div><div class="l-sub">${fmt(c.price)} × ${c.qty}</div></div></div>
       <div style="display:flex;align-items:center;gap:8px">
-        <button class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},-1)">−</button>
-        <button class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},1)">+</button>
+        <button type="button" class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},-1)">−</button>
+        <button type="button" class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},1)">+</button>
       </div>
     </div>`).join("") + `<div style="text-align:right;font-weight:700;margin-top:8px">Total: ${fmt(total)}</div>`;
 }
@@ -334,6 +410,7 @@ async function checkout(products, customers) {
   const custId = document.getElementById("pos-cust").value;
   const cust = customers.find((c) => c.id === custId);
   const manualName = (document.getElementById("pos-cust-name")?.value || "").trim();
+  const manualPhone = (document.getElementById("pos-cust-phone")?.value || "").trim();
   const discount = Number(document.getElementById("pos-discount").value || 0);
   const payment = document.getElementById("pos-payment").value;
   const subtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
@@ -341,12 +418,18 @@ async function checkout(products, customers) {
   const profit = cart.reduce((a, c) => a + (c.price - c.cost) * c.qty, 0) - discount;
   const invoiceNo = "INV-" + (10000 + (await DB.getAll("sales")).length + 1);
   const customerName = manualName || (cust ? cust.name : "Walk-in Customer");
-  const sale = { invoiceNo, customerId: custId || null, customerName,
-    customerPhone: cust ? (cust.phone || "") : "", items: cart.map((c) => ({ id: c.id, name: c.name, price: c.price, cost: c.cost, qty: c.qty })), subtotal, discount, total, profit, payment, date: new Date().toISOString() };
+  const customerPhone = manualPhone || (cust ? (cust.phone || "") : "");
+  const sale = { invoiceNo, customerId: custId || null, customerName, customerPhone,
+    items: cart.map((c) => ({ id: c.id, name: c.name, price: c.price, cost: c.cost, qty: c.qty })),
+    subtotal, discount, total, profit, payment, date: new Date().toISOString() };
   await DB.put("sales", sale);
   for (const item of cart) {
     const p = products.find((x) => x.id === item.id);
-    if (p) { p.qty = Math.max(0, Number(p.qty) - item.qty); await DB.put("products", p); }
+    if (p) {
+      p.qty = Math.max(0, Number(p.qty) - item.qty);
+      if (p.imei && p.qty === 0) p.soldInvoice = invoiceNo;
+      await DB.put("products", p);
+    }
   }
   if (cust) {
     cust.points = Number(cust.points || 0) + Math.floor(total / 1000); // 1 loyalty point per Rs 1000 spent
@@ -358,11 +441,12 @@ async function checkout(products, customers) {
   showInvoice(sale);
 }
 
-function showInvoice(sale) {
+function showInvoice(sale, opts = {}) {
+  const isDup = !!opts.duplicate;
   const overlay = document.createElement("div");
   overlay.id = "invoice-overlay";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px";
-  const itemsHtml = sale.items.map((i) => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">
+  const itemsHtml = (sale.items || []).map((i) => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">
     <span>${escapeHtml(i.name)} x${i.qty}</span><span>${fmt(i.price * i.qty)}</span></div>`).join("");
   const waText = encodeURIComponent(
     `Sanaullah Mobile Communication\nInvoice #${sale.invoiceNo}\nCustomer: ${sale.customerName}\n\n` +
@@ -374,6 +458,7 @@ function showInvoice(sale) {
   <div id="invoice-box" class="receipt-80mm">
     <div style="text-align:center;font-weight:800;font-size:15px">SANAULLAH MOBILE COMMUNICATION</div>
     <div style="text-align:center;font-size:10px;margin-bottom:6px">Sales · Accessories · Repairs · Service</div>
+    ${isDup ? '<div style="text-align:center;font-weight:800;font-size:12px;margin:4px 0">*** DUPLICATE COPY ***</div>' : ''}
     <div class="rline"></div>
     <div style="font-size:11px">Invoice #${sale.invoiceNo}<br/>Customer: ${escapeHtml(sale.customerName)}${sale.customerPhone ? " (" + escapeHtml(sale.customerPhone) + ")" : ""}<br/>Date: ${new Date(sale.date).toLocaleString()}</div>
     <div class="rline"></div>
@@ -400,7 +485,7 @@ function showInvoice(sale) {
   }
   document.getElementById("thermal-print-btn").onclick = async () => {
     try {
-      await printSaleThermal(sale);
+      await printSaleThermal({ ...sale, _duplicate: isDup || sale._duplicate });
     } catch (e) {
       console.error(e);
       toast(e.message || "Print failed");
@@ -433,6 +518,7 @@ async function printSaleThermal(sale) {
   await printer.printText("SANAULLAH MOBILE", { align: "center", bold: true });
   await printer.printText("COMMUNICATION", { align: "center", bold: true });
   await printer.printText("Sales · Accessories · Repairs", { align: "center" });
+  if (sale._duplicate) await printer.printText("*** DUPLICATE COPY ***", { align: "center", bold: true });
   await printer.printText(line, { align: "center" });
   await printer.printText("Invoice #" + (sale.invoiceNo || ""));
   await printer.printText("Customer: " + (sale.customerName || "Walk-in"));
@@ -577,6 +663,12 @@ function openForm(opts, existing) {
       record[f.key] = f.type === "number" ? Number(v || 0) : v;
     });
     if (opts.beforeSave) opts.beforeSave(record);
+    // IMEI unique check for products
+    if (opts.store === "products" && record.imei) {
+      const all = await DB.getAll("products");
+      const dup = all.find((p) => p.imei && p.imei === record.imei && p.id !== record.id);
+      if (dup) { toast("IMEI already used: " + dup.name); return; }
+    }
     await DB.put(opts.store, record);
     await logAudit(existing ? "update" : "create", `${existing ? "Updated" : "Created"} ${opts.title.replace(/s$/, "")}: ${record.name || record.title || record.customerName || record.supplierName || record.id}`);
     overlay.remove();
@@ -652,7 +744,12 @@ window.showLedger = async (customerId, name) => {
   overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px;max-height:85vh;overflow:auto">
     <h2 style="margin-top:0">${escapeHtml(name)}'s Ledger</h2>
     <div class="card">Total Spent: ${fmt(totalSpent)} · ${custSales.length} invoices</div>
-    ${custSales.map((s) => `<div class="list-row"><div class="l-title">Invoice #${escapeHtml(s.invoiceNo)}</div><div class="l-title">${fmt(s.total)}</div></div>`).join("")}
+    ${custSales.map((s) => `<div class="list-row">
+      <div class="l-title">Invoice #${escapeHtml(s.invoiceNo)}</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="l-title">${fmt(s.total)}</div>
+        <button class="btn ghost" style="padding:4px 8px;font-size:11px" onclick='reprintInvoice("${s.id}")'>🖨️</button>
+      </div></div>`).join("")}
     ${custInst.length ? `<div class="section-title" style="padding-left:0">Installments</div>` + custInst.map((i) => `<div class="list-row"><div class="l-title">${escapeHtml(i.item)}</div><div class="l-title">${fmt(i.remaining)} left</div></div>`).join("") : ""}
     <button class="btn full ghost" id="ledger-close" style="margin-top:12px">Close</button>
   </div>`;
@@ -742,26 +839,60 @@ const renderExpenses = moduleListPage(expensesOpts);
 
 // ---------- Reports ----------
 async function renderReports() {
-  const [sales, expenses, products] = await Promise.all([DB.getAll("sales"), DB.getAll("expenses"), DB.getAll("products")]);
+  const [sales, expenses, products, returnsList] = await Promise.all([
+    DB.getAll("sales"), DB.getAll("expenses"), DB.getAll("products"), DB.getAll("returns")
+  ]);
   const totalSales = sales.reduce((a, s) => a + Number(s.total || 0), 0);
   const totalProfit = sales.reduce((a, s) => a + Number(s.profit || 0), 0);
   const totalExpenses = expenses.reduce((a, e) => a + Number(e.amount || 0), 0);
+  const totalReturns = returnsList.reduce((a, r) => a + Number(r.amount || 0), 0);
   const stockValue = products.reduce((a, p) => a + Number(p.costPrice || 0) * Number(p.qty || 0), 0);
+  const lowStock = products.filter((p) => Number(p.qty) <= Number(p.reorderLevel || 5));
+
+  // Last 7 days sales bars
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    const sum = sales.filter((s) => (s.date || "").slice(0, 10) === key).reduce((a, s) => a + Number(s.total || 0), 0);
+    days.push({ key: key.slice(5), sum });
+  }
+  const maxDay = Math.max(1, ...days.map((d) => d.sum));
+  const bars = days.map((d) => {
+    const h = Math.max(4, Math.round((d.sum / maxDay) * 80));
+    return `<div style="flex:1;text-align:center"><div style="height:80px;display:flex;align-items:flex-end;justify-content:center"><div style="width:70%;height:${h}px;background:linear-gradient(180deg,var(--blue),var(--blue2));border-radius:6px 6px 0 0"></div></div><div style="font-size:10px;color:var(--muted);margin-top:4px">${d.key}</div></div>`;
+  }).join("");
+
+  const lowWa = lowStock.length
+    ? encodeURIComponent("Low stock alert — Sanaullah MC\\n" + lowStock.map((p) => p.name + " qty:" + p.qty).join("\\n"))
+    : "";
+
   const html = `
   <div class="page">
     <h2>Reports</h2>
+    <div class="card"><div class="l-sub">Last 7 days sales</div>
+      <div style="display:flex;gap:4px;margin-top:10px">${bars}</div>
+    </div>
     <div class="card"><div class="l-sub">Total Sales</div><div class="l-title" style="font-size:20px">${fmt(totalSales)}</div></div>
     <div class="card"><div class="l-sub">Total Profit</div><div class="l-title" style="font-size:20px">${fmt(totalProfit)}</div></div>
+    <div class="card"><div class="l-sub">Returns</div><div class="l-title" style="font-size:20px">${fmt(totalReturns)}</div></div>
     <div class="card"><div class="l-sub">Total Expenses</div><div class="l-title" style="font-size:20px">${fmt(totalExpenses)}</div></div>
-    <div class="card"><div class="l-sub">Net (Profit − Expenses)</div><div class="l-title" style="font-size:20px">${fmt(totalProfit - totalExpenses)}</div></div>
+    <div class="card"><div class="l-sub">Net (Profit − Expenses − Returns)</div><div class="l-title" style="font-size:20px">${fmt(totalProfit - totalExpenses - totalReturns)}</div></div>
     <div class="card"><div class="l-sub">Current Stock Value</div><div class="l-title" style="font-size:20px">${fmt(stockValue)}</div></div>
+    <div class="card">
+      <div class="l-sub">Low stock items: ${lowStock.length}</div>
+      ${lowStock.length ? `<a class="btn full" style="margin-top:8px;background:#25D366;text-decoration:none;text-align:center" target="_blank" href="https://wa.me/?text=${lowWa}">WhatsApp low-stock list</a>` : ""}
+    </div>
     <button class="btn full ghost" id="rep-export">Export Sales as CSV</button>
-    <button class="btn full" id="expenses-btn" style="margin-top:10px">Manage Expenses</button>
+    <button class="btn full" id="returns-btn" style="margin-top:10px">Returns / Credit Notes</button>
+    <button class="btn full ghost" id="expenses-btn" style="margin-top:10px">Manage Expenses</button>
   </div>`;
   root.innerHTML = shell("reports", html);
   document.getElementById("expenses-btn").onclick = () => location.hash = "#/expenses";
+  document.getElementById("returns-btn").onclick = () => location.hash = "#/returns";
   document.getElementById("rep-export").onclick = () => exportCSV(sales);
 }
+
 function exportCSV(sales) {
   const rows = [["Invoice", "Customer", "Total", "Profit", "Date"]];
   sales.forEach((s) => rows.push([s.invoiceNo, s.customerName, s.total, s.profit, s.date]));
@@ -789,7 +920,19 @@ async function renderSettings() {
     </div>
     <div class="card">
       <div class="l-title" style="margin-bottom:6px">Firebase Sync</div>
-      <div class="l-sub">${window.SMSync && window.SMSync.isReady() ? "🟢 Connected — sync every 3 seconds + realtime." : "⚪ Firebase not ready. Check internet / Auth."}</div>
+      <div class="l-sub" style="margin-bottom:8px">${window.SMSync && window.SMSync.isReady() && window.SMSync.currentUser()
+        ? "🟢 Signed in — 1 doc/record · sync 3s + realtime"
+        : window.SMSync && window.SMSync.isReady()
+          ? "🟡 Firebase ready — Firebase email se login karo"
+          : "⚪ Firebase not ready."}</div>
+      <button class="btn full" id="sync-now" style="margin-bottom:8px">🔄 Sync Now</button>
+      <button class="btn full" id="sync-full" style="margin-bottom:8px;background:var(--green)">☁️ Full Cloud Resync</button>
+      <button class="btn full ghost" id="sync-clear" style="margin-bottom:8px">Clear pending queue</button>
+      <div class="form-row"><label>Language / زبان</label>
+        <select id="set-lang">
+          <option value="en" ${(localStorage.getItem("sm_lang")||"en")==="en"?"selected":""}>English</option>
+          <option value="ur" ${(localStorage.getItem("sm_lang")||"en")==="ur"?"selected":""}>اردو</option>
+        </select></div>
     </div>
     <div class="card">
       <div class="l-title" style="margin-bottom:6px">Thermal Printer</div>
@@ -862,6 +1005,41 @@ async function renderSettings() {
       toast("Test printed");
     } catch (e) { toast(e.message || "Test failed"); }
   };
+  const syncNow = document.getElementById("sync-now");
+  const syncClear = document.getElementById("sync-clear");
+  if (syncNow) syncNow.onclick = async () => {
+    if (!window.SMSync || !SMSync.currentUser()) { toast("Firebase email se login karo"); return; }
+    toast("Syncing…");
+    await SMSync.flushQueue();
+    window._pendingCount = await DB.pendingSyncCount();
+    updateSyncStatusBar();
+    toast(window._pendingCount ? (window._pendingCount + " still pending") : "Synced");
+  };
+  const syncFull = document.getElementById("sync-full");
+  if (syncFull) syncFull.onclick = async () => {
+    if (!window.SMSync || !SMSync.currentUser()) { toast("Firebase email se login karo"); return; }
+    if (!confirm("Full resync: pending clear + pull cloud + push all local docs?")) return;
+    toast("Full resync… wait");
+    try {
+      const n = await SMSync.fullResync();
+      window._pendingCount = await DB.pendingSyncCount();
+      updateSyncStatusBar();
+      toast("Done — " + n + " docs on cloud");
+    } catch (e) { toast(e.message || "Resync failed"); }
+  };
+  if (syncClear) syncClear.onclick = async () => {
+    if (!confirm("Pending queue clear? Local data safe rahega.")) return;
+    await SMSync.clearPending();
+    window._pendingCount = 0;
+    updateSyncStatusBar();
+    toast("Queue cleared — fresh");
+  };
+  const langSel = document.getElementById("set-lang");
+  if (langSel) langSel.onchange = (e) => {
+    localStorage.setItem("sm_lang", e.target.value);
+    toast(e.target.value === "ur" ? "زبان اردو" : "Language English");
+    router();
+  };
   const csvInput = document.getElementById("csv-import");
   if (csvInput) csvInput.onchange = (e) => importProductsCSV(e.target.files[0]);
   const backupBtn = document.getElementById("backup-now");
@@ -872,7 +1050,7 @@ async function renderSettings() {
 
 // ---------- Backup & Restore ----------
 const BACKUP_STORES = ["products", "customers", "sales", "repairs", "installments",
-  "suppliers", "expenses", "staff", "settings", "purchaseOrders", "auditLogs", "attendance"];
+  "suppliers", "expenses", "staff", "settings", "purchaseOrders", "auditLogs", "attendance", "returns"];
 
 async function backupNow() {
   const data = {};
@@ -933,6 +1111,31 @@ function importProductsCSV(file) {
   reader.readAsText(file);
 }
 
+
+// ---------- Returns / Credit Notes ----------
+const returnsOpts = {
+  title: "Returns", store: "returns", activeTab: "reports",
+  emptyText: "No returns yet.",
+  fields: [
+    { key: "invoiceNo", label: "Original Invoice #" },
+    { key: "customerName", label: "Customer Name" },
+    { key: "item", label: "Item / Reason" },
+    { key: "amount", label: "Return Amount", type: "number" },
+    { key: "date", label: "Date", type: "date" },
+    { key: "status", label: "Status", type: "select", options: [
+      { value: "refunded", label: "Refunded" }, { value: "exchange", label: "Exchange" }, { value: "credit", label: "Store Credit" }
+    ] },
+  ],
+  renderRow: (r) => `<div class="list-row" onclick='editItem("returns","${r.id}", returnsOpts)'>
+    <div class="l-left"><div class="dot" style="background:var(--orange)">↩️</div>
+      <div><div class="l-title">${escapeHtml(r.customerName || r.invoiceNo || "")}</div>
+      <div class="l-sub">${escapeHtml(r.item || "")} · ${escapeHtml(r.date || "")}</div></div></div>
+    <div style="text-align:right"><div class="l-title">${fmt(r.amount)}</div>
+    <span class="pill warn">${escapeHtml(r.status || "")}</span></div></div>`
+};
+window.returnsOpts = returnsOpts;
+const renderReturns = moduleListPage(returnsOpts);
+
 // ---------- Staff & Roles ----------
 const staffOpts = {
   title: "Staff", store: "staff", activeTab: "settings",
@@ -943,6 +1146,7 @@ const staffOpts = {
     { key: "pin", label: "PIN / Password (used to login)" },
     { key: "role", label: "Role", type: "select", options: [
       { value: "cashier", label: "Cashier (Sales, Products, Customers)" },
+      { value: "manager", label: "Manager (Sales + Stock + Reports)" },
       { value: "technician", label: "Technician (Repairs only)" },
       { value: "admin", label: "Admin (Full access)" },
     ] },
@@ -1017,10 +1221,25 @@ async function renderAuditLogs() {
 }
 
 // ---------- Boot ----------
-window.addEventListener("sm:queued", async () => { window._pendingCount = await DB.pendingSyncCount(); });
-window.addEventListener("sm:synced", async () => { window._pendingCount = await DB.pendingSyncCount(); router(); });
-window.addEventListener("online", () => router());
-window.addEventListener("offline", () => router());
+window.addEventListener("sm:queued", async () => {
+  window._pendingCount = await DB.pendingSyncCount();
+  updateSyncStatusBar();
+});
+window.addEventListener("sm:synced", async () => {
+  window._pendingCount = await DB.pendingSyncCount();
+  updateSyncStatusBar(); // do NOT router() — it wipes POS form inputs
+});
+window.addEventListener("online", () => updateSyncStatusBar());
+window.addEventListener("offline", () => updateSyncStatusBar());
+
+function updateSyncStatusBar() {
+  const el = document.querySelector(".sync-status");
+  if (!el || !state.user) return;
+  const pending = window._pendingCount || 0;
+  el.textContent = (navigator.onLine ? "🟢 Online" : "🟠 Offline")
+    + (pending ? " · " + pending + " pending sync" : " · synced")
+    + " · " + (state.user.role || "admin");
+}
 
 (async function boot() {
   await tryRestoreSession();
