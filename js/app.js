@@ -738,6 +738,11 @@ function openForm(opts, existing) {
       const dup = all.find((p) => p.imei && p.imei === record.imei && p.id !== record.id);
       if (dup) { toast("IMEI already used: " + dup.name); return; }
     }
+    // Returns: restore stock once (new records only)
+    if (opts.store === "returns" && !existing) {
+      await restoreStockFromReturn(record);
+      record.stockRestored = true;
+    }
     await DB.put(opts.store, record);
     await logAudit(existing ? "update" : "create", `${existing ? "Updated" : "Created"} ${opts.title.replace(/s$/, "")}: ${record.name || record.title || record.customerName || record.supplierName || record.id}`);
     overlay.remove();
@@ -842,10 +847,18 @@ const repairsOpts = {
       { value: "ready", label: "Ready" }, { value: "delivered", label: "Delivered" }
     ] },
   ],
-  renderRow: (r) => `<div class="list-row" onclick='editItem("repairs","${r.id}", repairsOpts)'>
-    <div class="l-left"><div class="dot" style="background:var(--orange)">🔧</div>
-      <div><div class="l-title">${escapeHtml(r.device || "")}</div><div class="l-sub">${escapeHtml(r.customerName || "")} · ${escapeHtml(r.fault || "")}</div></div></div>
-    <span class="pill ${r.status === "delivered" ? "ok" : r.status === "ready" ? "warn" : "bad"}">${(r.status || "received").replace("_", " ")}</span></div>`
+  renderRow: (r) => `<div class="list-row">
+    <div class="l-left" style="flex:1;cursor:pointer" onclick='editItem("repairs","${r.id}", repairsOpts)'>
+      <div class="dot" style="background:var(--orange)">🔧</div>
+      <div><div class="l-title">${escapeHtml(r.device || "")}</div>
+      <div class="l-sub">${escapeHtml(r.customerName || "")} · ${escapeHtml(r.fault || "")}</div></div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+      <span class="pill ${r.status === "delivered" ? "ok" : r.status === "ready" ? "warn" : "bad"}">${(r.status || "received").replace("_", " ")}</span>
+      ${r.status === "ready" && r.phone ? `<a class="btn ghost" style="padding:3px 8px;font-size:11px;background:#25D366;color:#fff;border:none;text-decoration:none"
+        href="https://wa.me/${String(r.phone).replace(/\D/g,"")}?text=${encodeURIComponent("Assalamualaikum " + (r.customerName||"") + ", aapka " + (r.device||"device") + " repair ready hai. Sanaullah Mobile Communication.")}"
+        target="_blank" onclick="event.stopPropagation()">WhatsApp</a>` : ""}
+    </div></div>`
 };
 window.repairsOpts = repairsOpts;
 const renderRepairs = moduleListPage(repairsOpts);
@@ -864,14 +877,51 @@ const installmentsOpts = {
       { value: "active", label: "Active" }, { value: "paid", label: "Paid" }, { value: "overdue", label: "Overdue" }
     ] },
   ],
-  beforeSave: (r) => { r.remaining = Number(r.totalAmount || 0) - Number(r.paid || 0); if (r.remaining <= 0) r.status = "paid"; },
-  renderRow: (i) => `<div class="list-row" onclick='editItem("installments","${i.id}", installmentsOpts)'>
-    <div class="l-left"><div class="dot" style="background:var(--blue)">📅</div>
-      <div><div class="l-title">${escapeHtml(i.customerName || "")}</div><div class="l-sub">${escapeHtml(i.item || "")} · Due ${escapeHtml(i.dueDate || "-")}</div></div></div>
-    <div style="text-align:right"><div class="l-title">${fmt(i.remaining)}</div><span class="pill ${i.status === "paid" ? "ok" : "warn"}">${i.status}</span></div></div>`
+    beforeSave: (r) => { r.remaining = Number(r.totalAmount || 0) - Number(r.paid || 0); if (r.remaining <= 0) r.status = "paid"; },
+  renderRow: (i) => `<div class="list-row">
+    <div class="l-left" style="flex:1;cursor:pointer" onclick='editItem("installments","${i.id}", installmentsOpts)'>
+      <div class="dot" style="background:var(--blue)">📅</div>
+      <div><div class="l-title">${escapeHtml(i.customerName || "")}</div>
+      <div class="l-sub">${escapeHtml(i.item || "")} · Due ${escapeHtml(i.dueDate || "-")}</div></div>
+    </div>
+    <div style="text-align:right">
+      <div class="l-title">${fmt(i.remaining)}</div>
+      <span class="pill ${i.status === "paid" ? "ok" : "warn"}">${i.status}</span>
+      ${i.status !== "paid" ? `<button class="btn" style="padding:3px 8px;margin-top:4px;font-size:11px" onclick='event.stopPropagation();receiveInstallment("${i.id}")'>💵 Pay</button>` : ""}
+    </div></div>`
 };
 window.installmentsOpts = installmentsOpts;
 const renderInstallments = moduleListPage(installmentsOpts);
+
+window.receiveInstallment = async (id) => {
+  const row = await DB.get("installments", id);
+  if (!row) return;
+  const rem = Number(row.remaining != null ? row.remaining : (Number(row.totalAmount||0) - Number(row.paid||0)));
+  const raw = prompt("Receive amount (Rs). Remaining: " + rem, String(rem));
+  if (raw == null) return;
+  const amt = Number(raw);
+  if (!(amt > 0)) { toast("Invalid amount"); return; }
+  row.paid = Number(row.paid || 0) + amt;
+  row.remaining = Math.max(0, Number(row.totalAmount || 0) - row.paid);
+  if (row.remaining <= 0) row.status = "paid";
+  await DB.put("installments", row);
+  await logAudit("installment", "Payment " + fmt(amt) + " from " + (row.customerName || ""));
+  toast("Received " + fmt(amt));
+  // quick receipt overlay
+  const msg = "Sanaullah Mobile Communication\nInstallment Receipt\n" + (row.customerName||"") + "\nPaid: " + fmt(amt) + "\nRemaining: " + fmt(row.remaining);
+  if (confirm("Print / show receipt?")) {
+    showInvoice({
+      invoiceNo: "INST-" + (row.id || "").slice(-6),
+      customerName: row.customerName || "",
+      customerPhone: "",
+      items: [{ name: row.item || "Installment", qty: 1, price: amt }],
+      subtotal: amt, discount: 0, total: amt, payment: "Installment",
+      date: new Date().toISOString(), _duplicate: false
+    });
+  }
+  router();
+};
+
 
 // ---------- Suppliers ----------
 const suppliersOpts = {
@@ -1015,6 +1065,7 @@ async function renderSettings() {
       <button class="btn full ghost" style="margin-bottom:8px" onclick="location.hash='#/staff'">👨‍💼 Staff & Roles</button>
       <button class="btn full ghost" style="margin-bottom:8px" onclick="location.hash='#/purchase-orders'">🚚 Purchase Orders</button>
       <button class="btn full ghost" style="margin-bottom:8px" onclick="location.hash='#/cashbook'">💵 Cash Book / Daily Closing</button>
+      <button class="btn full ghost" style="margin-bottom:8px" onclick="searchImeiRegistry()">🔍 IMEI / Sold Registry</button>
       <button class="btn full ghost" onclick="location.hash='#/audit-logs'">📋 Audit Logs</button>
     </div>
     <div class="card">
@@ -1181,6 +1232,66 @@ function importProductsCSV(file) {
 }
 
 
+
+/** Restore product qty when a return is saved */
+async function restoreStockFromReturn(record) {
+  const sales = await DB.getAll("sales");
+  const inv = String(record.invoiceNo || "").trim().toLowerCase();
+  const sale = sales.find((s) =>
+    String(s.invoiceNo || "").toLowerCase() === inv ||
+    String(s.id || "").toLowerCase() === inv
+  );
+  const products = await DB.getAll("products");
+  let restored = 0;
+  if (sale && Array.isArray(sale.items)) {
+    for (const it of sale.items) {
+      const p = products.find((x) => x.id === it.id) || products.find((x) => x.name === it.name);
+      if (p) {
+        p.qty = Number(p.qty || 0) + Number(it.qty || 1);
+        if (p.soldInvoice) delete p.soldInvoice;
+        await DB.put("products", p);
+        restored++;
+      }
+    }
+  } else if (record.item) {
+    const name = String(record.item).split(",")[0].split(" x")[0].trim();
+    const p = products.find((x) => x.name && x.name.toLowerCase() === name.toLowerCase());
+    if (p) {
+      p.qty = Number(p.qty || 0) + 1;
+      await DB.put("products", p);
+      restored = 1;
+    }
+  }
+  if (restored) toast("Stock restored (" + restored + " item)");
+  else toast("Return saved (stock auto-match nahi hua)");
+}
+
+/** IMEI / sold phone registry search */
+async function searchImeiRegistry() {
+  const q = prompt("IMEI / Serial search:");
+  if (!q) return;
+  const qq = q.trim().toLowerCase();
+  const products = await DB.getAll("products");
+  const sales = await DB.getAll("sales");
+  const hits = [];
+  for (const p of products) {
+    if (p.imei && String(p.imei).toLowerCase().includes(qq)) {
+      hits.push("Product: " + p.name + " · Stock " + p.qty + (p.soldInvoice ? " · Sold " + p.soldInvoice : ""));
+    }
+  }
+  for (const s of sales) {
+    for (const it of (s.items || [])) {
+      const p = products.find((x) => x.id === it.id);
+      if (p && p.imei && String(p.imei).toLowerCase().includes(qq)) {
+        hits.push("Sale " + (s.invoiceNo || "") + " · " + (s.customerName || "") + " · " + it.name);
+      }
+    }
+  }
+  if (!hits.length) toast("No IMEI match");
+  else alert("IMEI results:\n\n" + hits.slice(0, 15).join("\n"));
+}
+window.searchImeiRegistry = searchImeiRegistry;
+
 // ---------- Returns / Credit Notes ----------
 const returnsOpts = {
   title: "Returns", store: "returns", activeTab: "reports",
@@ -1262,9 +1373,17 @@ async function renderCashbook() {
   expenses.forEach((e) => { const d = e.date || ""; byDay[d] = byDay[d] || { in: 0, out: 0 }; byDay[d].out += Number(e.amount || 0); });
   po.forEach((o) => { const d = todayKey(); byDay[d] = byDay[d] || { in: 0, out: 0 }; });
   const days = Object.keys(byDay).sort().reverse();
+  const today = todayKey();
+  const t = byDay[today] || { in: 0, out: 0 };
   const html = `
   <div class="page">
     <h2>Cash Book / Daily Closing</h2>
+    <div class="card" style="border:2px solid var(--blue)">
+      <div class="l-title">Today (${today})</div>
+      <div class="l-sub">Cash In: ${fmt(t.in)} · Cash Out: ${fmt(t.out)}</div>
+      <div style="font-weight:800;font-size:18px;margin-top:6px">Net: ${fmt(t.in - t.out)}</div>
+      <button class="btn full" id="day-close-print" style="margin-top:12px">🖨️ Print Day Close</button>
+    </div>
     ${days.length ? days.map((d) => `
       <div class="card">
         <div class="l-title">${d}</div>
@@ -1273,6 +1392,39 @@ async function renderCashbook() {
       </div>`).join("") : `<div class="empty">No cash movements recorded yet.</div>`}
   </div>`;
   root.innerHTML = shell("settings", html);
+  document.getElementById("day-close-print").onclick = async () => {
+    try {
+      await printDayClose(today, t);
+    } catch (e) { toast(e.message || "Print failed"); }
+  };
+}
+
+async function printDayClose(day, totals) {
+  if (typeof ThermalPrinter === "undefined") {
+    // screen fallback
+    alert("Day Close " + day + "\nIn: " + fmt(totals.in) + "\nOut: " + fmt(totals.out) + "\nNet: " + fmt(totals.in - totals.out));
+    return;
+  }
+  const printer = window.shopPrinter || new ThermalPrinter({ paperWidth: 80 });
+  window.shopPrinter = printer;
+  if (!printer.isConnected) {
+    toast("Printer connect…");
+    await printer.connect();
+  }
+  await printer.init();
+  await printer.printText("SANAULLAH MOBILE", { align: "center", bold: true });
+  await printer.printText("DAY CLOSE", { align: "center", bold: true });
+  await printer.printText(day, { align: "center" });
+  await printer.printText("--------------------", { align: "center" });
+  await printer.printText("Cash In:  " + fmt(totals.in));
+  await printer.printText("Cash Out: " + fmt(totals.out));
+  await printer.printText("NET:      " + fmt(totals.in - totals.out), { bold: true });
+  await printer.printText("--------------------", { align: "center" });
+  await printer.printSmall("Software by Fazal Khan Chandio", { align: "center" });
+  await printer.printSmall("03333909816", { align: "center" });
+  await printer.feed(1);
+  await printer.doCut();
+  toast("Day close printed");
 }
 
 // ---------- Audit Logs ----------
@@ -1314,4 +1466,18 @@ function updateSyncStatusBar() {
   await tryRestoreSession();
   window._pendingCount = await DB.pendingSyncCount();
   router();
+  // Daily backup reminder (once per calendar day)
+  try {
+    const last = localStorage.getItem("sm_last_backup_day");
+    const day = todayKey();
+    if (state.user && last !== day) {
+      setTimeout(() => {
+        if (confirm("Daily backup? Shop data JSON download ho jaye.")) {
+          backupNow().then(() => localStorage.setItem("sm_last_backup_day", day));
+        } else {
+          localStorage.setItem("sm_last_backup_day", day);
+        }
+      }, 2500);
+    }
+  } catch (e) {}
 })();
