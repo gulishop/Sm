@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Sanaullah Mobile Communication</title>
+<meta name="theme-color" content="#1e5fff" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<link rel="stylesheet" href="css/style.css" />
+
+<!-- To enable Firebase cloud sync: uncomment these two lines and set your
+     config in js/firebase-sync.js. The app works fully offline without them. -->
+<!-- <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script> -->
+<!-- <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script> -->
+</head>
+<body>
+<div id="app"></div>
+
+<script src="js/db.js"></script>
+<script src="js/firebase-sync.js"></script>
+<script src="js/app.js"></script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("service-worker.js").catch(console.warn);
+    });
+  }
+</script>
+</body>
+</html>
