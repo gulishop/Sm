@@ -219,11 +219,6 @@ window.SMSync = {
   },
 
   // Full pull (optional, on first login)
-  async clearPending() {
-    await DB.clearSyncQueue();
-    window.dispatchEvent(new CustomEvent("sm:synced"));
-  },
-
   async pullAll() {
     if (!this.isReady()) return;
     for (const store of SYNC_STORES) {

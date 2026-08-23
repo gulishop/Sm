@@ -93,8 +93,8 @@ const DB = {
       tx.onerror = () => reject(tx.error);
     });
 
-    // Queue for cloud sync — skip session + pure local noise
-    if (storeName !== "_syncQueue" && !(storeName === "settings" && rec.id === "session")) {
+    // Queue for cloud sync (skip internal/settings session noise if desired)
+    if (storeName !== "_syncQueue") {
       await this._enqueue("put", storeName, rec);
     }
     return rec;
