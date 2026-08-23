@@ -5,7 +5,7 @@
    then get pushed to Firebase in the background when connectivity exists. */
 
 const DB_NAME = "sm_app_db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORES = [
   "products", "customers", "sales", "repairs", "installments",
   "suppliers", "expenses", "staff", "settings", "syncQueue",

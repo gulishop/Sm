@@ -19,21 +19,21 @@ function toast(msg) {
 
 // ---------- Routing ----------
 const routes = {
-  "": renderDashboard,
-  "dashboard": renderDashboard,
-  "pos": renderPOS,
-  "products": renderProducts,
-  "customers": renderCustomers,
-  "repairs": renderRepairs,
-  "installments": renderInstallments,
-  "suppliers": renderSuppliers,
-  "expenses": renderExpenses,
-  "reports": renderReports,
-  "settings": renderSettings,
-  "staff": renderStaff,
-  "purchase-orders": renderPurchaseOrders,
-  "cashbook": renderCashbook,
-  "audit-logs": renderAuditLogs,
+  "": () => renderDashboard(),
+  "dashboard": () => renderDashboard(),
+  "pos": () => renderPOS(),
+  "products": () => renderProducts(),
+  "customers": () => renderCustomers(),
+  "repairs": () => renderRepairs(),
+  "installments": () => renderInstallments(),
+  "suppliers": () => renderSuppliers(),
+  "expenses": () => renderExpenses(),
+  "reports": () => renderReports(),
+  "settings": () => renderSettings(),
+  "staff": () => renderStaff(),
+  "purchase-orders": () => renderPurchaseOrders(),
+  "cashbook": () => renderCashbook(),
+  "audit-logs": () => renderAuditLogs(),
 };
 
 function can(feature) {
