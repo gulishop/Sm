@@ -1,5 +1,5 @@
 /* Minimal service worker — cache shell for offline */
-const CACHE = "sm-shell-v4";
+const CACHE = "sm-shell-v5";
 const ASSETS = [
   "./",
   "./index.html",
