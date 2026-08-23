@@ -8,7 +8,8 @@ const DB_NAME = "sm_app_db";
 const DB_VERSION = 1;
 const STORES = [
   "products", "customers", "sales", "repairs", "installments",
-  "suppliers", "expenses", "staff", "settings", "syncQueue"
+  "suppliers", "expenses", "staff", "settings", "syncQueue",
+  "purchaseOrders", "auditLogs", "attendance"
 ];
 
 let dbPromise = null;
