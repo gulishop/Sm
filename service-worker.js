@@ -1,43 +1,55 @@
-/* Minimal service worker — cache shell for offline */
-const CACHE = "sm-shell-v7";
+// Bump this version string every time you deploy changes -- it forces old
+// caches to be dropped so the app never gets stuck showing old code.
+const CACHE_VERSION = "v3";
+const CACHE_NAME = "sm-app-cache-" + CACHE_VERSION;
 const ASSETS = [
   "./",
   "./index.html",
+  "./manifest.json",
   "./css/style.css",
   "./js/db.js",
   "./js/firebase-sync.js",
-  "./js/app.js",
   "./js/thermal-printer.js",
-  "./manifest.json"
+  "./js/app.js",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png"
 ];
 
-self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
+  );
 });
 
-self.addEventListener("activate", (e) => {
-  e.waitUntil(
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
 
-self.addEventListener("fetch", (e) => {
-  const url = new URL(e.request.url);
-  // Network-first for API / Firebase; cache-first for same-origin shell
-  if (url.origin === self.location.origin) {
-    e.respondWith(
-      caches.match(e.request).then((cached) => {
-        const fetched = fetch(e.request).then((res) => {
-          if (res && res.ok && e.request.method === "GET") {
-            const clone = res.clone();
-            caches.open(CACHE).then((c) => c.put(e.request, clone));
-          }
-          return res;
-        }).catch(() => cached);
-        return cached || fetched;
+// NETWORK-FIRST for everything: when online, you always get the latest
+// deployed code straight away -- no more "keeps showing the old version".
+// Falls back to the cached copy only when there's no internet, so offline
+// mode still works exactly as before.
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  if (req.method !== "GET") return;
+
+  event.respondWith(
+    fetch(req)
+      .then((res) => {
+        const resClone = res.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone));
+        return res;
       })
-    );
-  }
+      .catch(() =>
+        caches.match(req).then((cached) => cached || (req.mode === "navigate" ? caches.match("./index.html") : undefined))
+      )
+  );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data === "SKIP_WAITING") self.skipWaiting();
 });
