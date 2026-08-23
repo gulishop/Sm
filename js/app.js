@@ -217,8 +217,9 @@ function navBtn(route, icon, label, active) {
 
 // ---------- Dashboard ----------
 async function renderDashboard() {
-  const [sales, repairs, installments, products] = await Promise.all([
-    DB.getAll("sales"), DB.getAll("repairs"), DB.getAll("installments"), DB.getAll("products")
+  const [sales, repairs, installments, products, returnsList] = await Promise.all([
+    DB.getAll("sales"), DB.getAll("repairs"), DB.getAll("installments"),
+    DB.getAll("products"), DB.getAll("returns")
   ]);
   const today = todayKey();
   const todaySales = sales.filter((s) => (s.date || "").slice(0, 10) === today);
@@ -227,50 +228,82 @@ async function renderDashboard() {
   const lowStock = products.filter((p) => Number(p.qty) <= Number(p.reorderLevel || 5));
   const dueInstallments = installments.filter((i) => i.status !== "paid");
   const dueTotal = dueInstallments.reduce((a, i) => a + Number(i.remaining || 0), 0);
-  const recent = [...sales].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 5);
+  const openRepairs = repairs.filter((r) => r.status !== "delivered");
+  const recent = [...sales].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 6);
 
   const html = `
   <div class="stat-grid">
-    <div class="stat-card stat-blue"><div class="label">Today's Sales</div><div class="value">${fmt(todayTotal)}</div><div class="delta">${todaySales.length} invoices</div></div>
-    <div class="stat-card stat-green"><div class="label">Today's Profit</div><div class="value">${fmt(todayProfit)}</div><div class="delta">&nbsp;</div></div>
-    <div class="stat-card stat-purple"><div class="label">Total Products</div><div class="value">${products.length}</div><div class="delta">All items</div></div>
-    <div class="stat-card stat-orange"><div class="label">Low Stock</div><div class="value">${lowStock.length}</div><div class="delta">View & manage</div></div>
+    <div class="stat-card stat-blue stat-tap" onclick="location.hash='#/sales'">
+      <div class="label">Today's Sales</div>
+      <div class="value">${fmt(todayTotal)}</div>
+      <div class="delta">${todaySales.length} invoices · tap to open</div>
+    </div>
+    <div class="stat-card stat-green stat-tap" onclick="location.hash='#/reports'">
+      <div class="label">Today's Profit</div>
+      <div class="value">${fmt(todayProfit)}</div>
+      <div class="delta">Reports · tap</div>
+    </div>
+    <div class="stat-card stat-purple stat-tap" onclick="location.hash='#/products'">
+      <div class="label">Products</div>
+      <div class="value">${products.length}</div>
+      <div class="delta">Stock list · tap</div>
+    </div>
+    <div class="stat-card stat-orange stat-tap" onclick="location.hash='#/products'">
+      <div class="label">Low Stock</div>
+      <div class="value">${lowStock.length}</div>
+      <div class="delta">Manage · tap</div>
+    </div>
   </div>
-  <div class="banner">
-    <div><div style="font-weight:700">Installment Due</div><div style="color:var(--muted);font-size:12px">${fmt(dueTotal)} from ${dueInstallments.length} customers</div></div>
-    <button class="btn ghost" onclick="location.hash='#/installments'">View All</button>
+
+  <div class="dash-pills">
+    <button class="dash-pill" onclick="location.hash='#/installments'">📅 Due ${fmt(dueTotal)} · ${dueInstallments.length}</button>
+    <button class="dash-pill" onclick="location.hash='#/repairs'">🔧 Repairs ${openRepairs.length}</button>
+    <button class="dash-pill" onclick="location.hash='#/returns'">↩️ Returns ${returnsList.length}</button>
   </div>
+
   <div class="section-title">Quick Actions</div>
-  <div class="qa-grid">
-    ${qa("pos", "🛒", "POS / Billing")}
-    ${qa("products", "➕", "Add Product")}
-    ${qa("customers", "👥", "Customers")}
-    ${qa("repairs", "🔧", "Repairs")}
-    ${qa("installments", "📅", "Installments")}
-    ${qa("suppliers", "🚚", "Suppliers")}
-    ${qa("expenses", "💰", "Expenses")}
-    ${qa("returns", "↩️", "Returns")}
-    ${qa("reports", "📈", "Reports")}
+  <div class="qa-grid qa-modern">
+    ${qa("pos", "🛒", "POS", "var(--blue)")}
+    ${qa("sales", "🧾", "Invoices", "#0ea5e9")}
+    ${qa("products", "📦", "Products", "var(--purple)")}
+    ${qa("customers", "👥", "Customers", "#8b5cf6")}
+    ${qa("repairs", "🔧", "Repairs", "var(--orange)")}
+    ${qa("installments", "📅", "Installments", "#06b6d4")}
+    ${qa("returns", "↩️", "Returns", "#f59e0b")}
+    ${qa("suppliers", "🚚", "Suppliers", "var(--red)")}
+    ${qa("expenses", "💰", "Expenses", "#10b981")}
+    ${qa("reports", "📈", "Reports", "#6366f1")}
+    ${qa("settings", "⚙️", "Settings", "var(--muted)")}
   </div>
-  <div class="section-title" style="display:flex;justify-content:space-between">Recent Transactions <a href="#/sales" style="color:var(--blue);font-size:12px">View All</a></div>
+
+  <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+    <span>Recent Invoices</span>
+    <a href="#/sales" style="color:var(--blue);font-size:12px;font-weight:600">View All →</a>
+  </div>
   ${recent.length ? recent.map((s) => `
-    <div class="list-row">
+    <div class="list-row dash-sale-row">
       <div class="l-left" style="flex:1;cursor:pointer" onclick='reprintInvoice("${s.id}")'>
-        <div class="dot" style="background:var(--blue)">🧾</div>
-        <div><div class="l-title">Invoice #${escapeHtml(s.invoiceNo || s.id)}</div>
-        <div class="l-sub">${escapeHtml(s.customerName || "Walk-in Customer")}</div></div>
+        <div class="dot" style="background:linear-gradient(135deg,#2563eb,#7c3aed)">🧾</div>
+        <div>
+          <div class="l-title">#${escapeHtml(s.invoiceNo || s.id)}</div>
+          <div class="l-sub">${escapeHtml(s.customerName || "Walk-in")} · ${(s.date || "").slice(0, 16).replace("T", " ")}</div>
+        </div>
       </div>
       <div style="text-align:right">
         <div class="l-title">${fmt(s.total)}</div>
-        <button class="btn ghost" style="padding:4px 10px;margin-top:4px;font-size:11px" onclick='event.stopPropagation();reprintInvoice("${s.id}")'>🖨️ Print</button>
+        <button class="btn ghost" style="padding:4px 10px;margin-top:4px;font-size:11px" onclick='event.stopPropagation();reprintInvoice("${s.id}")'>🖨️</button>
       </div>
     </div>`).join("")
-    : `<div class="empty">No sales yet. Tap POS / Billing to create your first invoice.</div>`}
+    : `<div class="empty">No sales yet. Tap <b>POS</b> to create first invoice.</div>`}
   `;
   root.innerHTML = shell("dashboard", html);
 }
-function qa(route, icon, label) {
-  return `<button class="qa-item" onclick="location.hash='#/${route}'"><div class="qi" style="background:var(--blue)">${icon}</div>${label}</button>`;
+function qa(route, icon, label, color) {
+  const bg = color || "var(--blue)";
+  return `<button class="qa-item qa-modern-item" onclick="location.hash='#/${route}'">
+    <div class="qi" style="background:${bg}">${icon}</div>
+    <span>${label}</span>
+  </button>`;
 }
 
 // ---------- POS / Billing ----------
@@ -653,6 +686,42 @@ function openForm(opts, existing) {
       scanBtn.className = "btn ghost full"; scanBtn.style.marginBottom = "10px"; scanBtn.textContent = "📷 Scan IMEI/Barcode";
       scanBtn.onclick = () => openBarcodeScanner((code) => { imeiInput.value = code; });
       imeiInput.after(scanBtn);
+    }
+  }
+  // Returns: invoice # → auto-fill customer, item, amount
+  if (opts.store === "returns") {
+    const invInput = overlay.querySelector("#f-invoiceNo");
+    if (invInput) {
+      const hint = document.createElement("div");
+      hint.style.cssText = "font-size:11px;color:var(--muted);margin:-6px 0 10px";
+      hint.textContent = "Invoice # likho / paste karo — details auto fill";
+      invInput.parentElement.after(hint);
+      const fillFromInvoice = async () => {
+        const q = (invInput.value || "").trim().toLowerCase();
+        if (!q) return;
+        const sales = await DB.getAll("sales");
+        const sale = sales.find((s) =>
+          String(s.invoiceNo || "").toLowerCase() === q ||
+          String(s.id || "").toLowerCase() === q ||
+          String(s.invoiceNo || "").toLowerCase().includes(q)
+        );
+        if (!sale) { toast("Invoice nahi mili"); return; }
+        const nameEl = overlay.querySelector("#f-customerName");
+        const itemEl = overlay.querySelector("#f-item");
+        const amtEl = overlay.querySelector("#f-amount");
+        const dateEl = overlay.querySelector("#f-date");
+        if (nameEl) nameEl.value = sale.customerName || "";
+        if (amtEl) amtEl.value = sale.total || 0;
+        if (dateEl && !dateEl.value) dateEl.value = todayKey();
+        if (itemEl) {
+          const names = (sale.items || []).map((i) => i.name + " x" + i.qty).join(", ");
+          itemEl.value = names || itemEl.value;
+        }
+        invInput.value = sale.invoiceNo || invInput.value;
+        toast("Invoice loaded: " + (sale.invoiceNo || ""));
+      };
+      invInput.addEventListener("blur", fillFromInvoice);
+      invInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); fillFromInvoice(); } });
     }
   }
   overlay.querySelector("#form-cancel").onclick = () => overlay.remove();
