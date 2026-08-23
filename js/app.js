@@ -59,38 +59,81 @@ async function router() {
 window.addEventListener("hashchange", router);
 
 // ---------- Login ----------
-// DEMO credentials — change these before going live, or wire up Firebase Auth
-// later (see js/firebase-sync.js). Staff added in the Staff module can also
-// log in with their own PIN once created.
+// DEMO credentials (local-only). Prefer Firebase Auth email/password when configured.
+// Staff added in Staff module can also log in with phone + PIN (local).
 const DEMO_ADMIN = { username: "admin", password: "admin123", name: "Admin", role: "admin" };
 
 function renderLogin() {
+  const fbReady = window.SMSync && window.SMSync.isConfigured();
   root.innerHTML = `
   <div class="login-screen">
-    <img src="icons/icon-512.png" class="login-logo" alt="logo" />
+    <img src="icons/icon-512.png" class="login-logo" alt="logo" onerror="this.style.display='none'" />
     <div class="login-title">SANAULLAH</div>
     <div class="login-sub">MOBILE COMMUNICATION</div>
-    <div class="field"><input id="li-user" placeholder="Email or Phone" /></div>
-    <div class="field"><input id="li-pass" type="password" placeholder="Password" /></div>
+    <div class="field"><input id="li-user" placeholder="${fbReady ? "Email / Phone / admin" : "Email or Phone"}" autocomplete="username" /></div>
+    <div class="field"><input id="li-pass" type="password" placeholder="Password / PIN" autocomplete="current-password" /></div>
     <div id="li-error" style="color:#f87171;font-size:12px;margin:-4px 0 10px;display:none"></div>
     <button class="btn-primary" id="li-btn">LOGIN</button>
-    <div style="color:var(--muted);font-size:12px;margin-top:10px">Demo login — Username: <b>admin</b> · Password: <b>admin123</b></div>
+    ${fbReady ? `<button class="btn-secondary" id="li-signup" style="margin-top:8px">Create Firebase Account</button>` : ""}
+    <div style="color:var(--muted);font-size:12px;margin-top:10px">Demo: <b>admin</b> / <b>admin123</b>${fbReady ? " · or your Firebase email" : ""}</div>
     <div style="color:var(--muted);font-size:10px;margin-top:18px">Software by Fazal Khan Chandio · 03333909816</div>
   </div>`;
   document.getElementById("li-btn").onclick = doLogin;
   document.getElementById("li-pass").onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
+  const signupBtn = document.getElementById("li-signup");
+  if (signupBtn) signupBtn.onclick = doSignup;
+}
+
+async function doSignup() {
+  const u = document.getElementById("li-user").value.trim();
+  const p = document.getElementById("li-pass").value.trim();
+  const err = document.getElementById("li-error");
+  err.style.display = "none";
+  if (!u.includes("@") || p.length < 6) {
+    err.textContent = "Use a valid email and password (min 6 chars) for Firebase signup.";
+    err.style.display = "block";
+    return;
+  }
+  try {
+    await SMSync.signUp(u, p);
+    state.user = { name: u.split("@")[0], role: "admin", email: u, firebase: true };
+    await DB.put("settings", { id: "session", user: state.user });
+    await logAudit("login", state.user.name + " signed up via Firebase");
+    toast("Account created & logged in");
+    location.hash = "#/dashboard";
+    router();
+  } catch (e) {
+    err.textContent = e.message || "Signup failed";
+    err.style.display = "block";
+  }
 }
 
 async function doLogin() {
   const u = document.getElementById("li-user").value.trim();
   const p = document.getElementById("li-pass").value.trim();
   const err = document.getElementById("li-error");
+  err.style.display = "none";
 
-  // 1. Check demo admin
+  // 1. Demo admin (always works offline)
   if (u.toLowerCase() === DEMO_ADMIN.username && p === DEMO_ADMIN.password) {
     state.user = { name: DEMO_ADMIN.name, role: "admin" };
-  } else {
-    // 2. Check staff records (username = phone, password = pin)
+  }
+  // 2. Firebase Auth (email + password) when configured
+  else if (u.includes("@") && window.SMSync && window.SMSync.isConfigured() && window.SMSync.isReady()) {
+    try {
+      const user = await SMSync.signIn(u, p);
+      state.user = { name: user.displayName || u.split("@")[0], role: "admin", email: u, firebase: true, uid: user.uid };
+      SMSync.pullAll().catch(console.warn);
+    } catch (e) {
+      err.textContent = (e.code === "auth/user-not-found" || e.code === "auth/wrong-password" || e.code === "auth/invalid-credential")
+        ? "Invalid email or password."
+        : (e.message || "Firebase login failed");
+      err.style.display = "block";
+      return;
+    }
+  }
+  // 3. Staff records (phone or name + PIN) — local
+  else {
     const staffList = await DB.getAll("staff");
     const match = staffList.find((s) => (s.phone === u || s.name === u) && String(s.pin) === p);
     if (match) {
@@ -335,7 +378,7 @@ function showInvoice(sale) {
 function moduleListPage(opts) {
   // opts: {title, store, activeTab, fields[], renderRow(item), emptyText}
   return async function render() {
-    const items = (await DB.getAll(opts.store)).sort((a, b) => b.updatedAt - a.updatedAt);
+    const items = (await DB.getAll(opts.store)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     const html = `
     <div class="page">
       <h2>${opts.title}</h2>
@@ -694,6 +737,9 @@ async function renderSettings() {
   };
   document.getElementById("set-logout").onclick = async () => {
     await logAudit("logout", state.user.name + " logged out");
+    if (window.SMSync && window.SMSync.currentUser()) {
+      try { await SMSync.signOut(); } catch (e) { console.warn(e); }
+    }
     state.user = null;
     await DB.remove("settings", "session");
     location.hash = "";
