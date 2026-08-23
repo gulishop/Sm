@@ -1,9 +1,8 @@
 {
   "name": "Sanaullah Mobile Communication",
-  "short_name": "SM Communication",
-  "description": "Sales, Accessories, Repairs & Service management app",
+  "short_name": "Sanaullah MC",
+  "description": "POS, inventory, repairs & installments for mobile shops",
   "start_url": "./index.html",
-  "scope": "./",
   "display": "standalone",
   "background_color": "#0a0e1a",
   "theme_color": "#1e5fff",

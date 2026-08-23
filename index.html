@@ -10,14 +10,12 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="stylesheet" href="css/style.css" />
 
-<!-- To enable Firebase cloud sync: uncomment these two lines and set your
-     config in js/firebase-sync.js. The app works fully offline without them. -->
-<!-- <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script> -->
-<!-- <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script> -->
+<!-- Firebase SDK (compat) — Auth + Firestore -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
-<!-- Barcode/QR scanning (camera) and barcode label generation. Loaded from CDN
-     at runtime in the user's browser — needs internet the first time to cache,
-     then works from service-worker cache. -->
+<!-- Barcode/QR scanning + label generation -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>

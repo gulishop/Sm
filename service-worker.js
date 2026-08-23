@@ -1,56 +1,42 @@
-const CACHE_NAME = "sm-app-cache-v1";
+/* Minimal service worker — cache shell for offline */
+const CACHE = "sm-shell-v2";
 const ASSETS = [
   "./",
   "./index.html",
-  "./manifest.json",
   "./css/style.css",
   "./js/db.js",
-  "./js/app.js",
   "./js/firebase-sync.js",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png"
+  "./js/app.js",
+  "./manifest.json"
 ];
 
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
-  );
+self.addEventListener("install", (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
 
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
+self.addEventListener("activate", (e) => {
+  e.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
 
-// Network-first for navigation/API, cache-first for static assets
-self.addEventListener("fetch", (event) => {
-  const req = event.request;
-  if (req.method !== "GET") return;
-
-  if (req.mode === "navigate") {
-    event.respondWith(
-      fetch(req).catch(() => caches.match("./index.html"))
-    );
-    return;
-  }
-
-  event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req)
-        .then((res) => {
-          const resClone = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone));
+self.addEventListener("fetch", (e) => {
+  const url = new URL(e.request.url);
+  // Network-first for API / Firebase; cache-first for same-origin shell
+  if (url.origin === self.location.origin) {
+    e.respondWith(
+      caches.match(e.request).then((cached) => {
+        const fetched = fetch(e.request).then((res) => {
+          if (res && res.ok && e.request.method === "GET") {
+            const clone = res.clone();
+            caches.open(CACHE).then((c) => c.put(e.request, clone));
+          }
           return res;
-        })
-        .catch(() => cached);
-    })
-  );
-});
-
-self.addEventListener("message", (event) => {
-  if (event.data === "SKIP_WAITING") self.skipWaiting();
+        }).catch(() => cached);
+        return cached || fetched;
+      })
+    );
+  }
 });
