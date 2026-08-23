@@ -59,10 +59,7 @@ async function router() {
 window.addEventListener("hashchange", router);
 
 // ---------- Login ----------
-// DEMO credentials (local-only). Prefer Firebase Auth email/password when configured.
-// Staff added in Staff module can also log in with phone + PIN (local).
-const DEMO_ADMIN = { username: "admin", password: "admin123", name: "Admin", role: "admin" };
-
+// Firebase Auth only (email + password). Staff PIN login kept as local fallback.
 function renderLogin() {
   const fbReady = window.SMSync && window.SMSync.isConfigured();
   root.innerHTML = `
@@ -70,18 +67,17 @@ function renderLogin() {
     <img src="icons/icon-512.png" class="login-logo" alt="logo" onerror="this.style.display='none'" />
     <div class="login-title">SANAULLAH</div>
     <div class="login-sub">MOBILE COMMUNICATION</div>
-    <div class="field"><input id="li-user" placeholder="${fbReady ? "Email / Phone / admin" : "Email or Phone"}" autocomplete="username" /></div>
-    <div class="field"><input id="li-pass" type="password" placeholder="Password / PIN" autocomplete="current-password" /></div>
+    <div class="field"><input id="li-user" placeholder="Email" autocomplete="username" /></div>
+    <div class="field"><input id="li-pass" type="password" placeholder="Password" autocomplete="current-password" /></div>
     <div id="li-error" style="color:#f87171;font-size:12px;margin:-4px 0 10px;display:none"></div>
     <button class="btn-primary" id="li-btn">LOGIN</button>
-    ${fbReady ? `<button class="btn-secondary" id="li-signup" style="margin-top:8px">Create Firebase Account</button>` : ""}
-    <div style="color:var(--muted);font-size:12px;margin-top:10px">Demo: <b>admin</b> / <b>admin123</b>${fbReady ? " · or your Firebase email" : ""}</div>
+    <button class="btn-secondary" id="li-signup" style="margin-top:8px">Create Account</button>
+    <div style="color:var(--muted);font-size:12px;margin-top:12px">${fbReady ? "Firebase Auth · Cloud Sync ON" : "⚠️ Firebase not configured"}</div>
     <div style="color:var(--muted);font-size:10px;margin-top:18px">Software by Fazal Khan Chandio · 03333909816</div>
   </div>`;
   document.getElementById("li-btn").onclick = doLogin;
   document.getElementById("li-pass").onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
-  const signupBtn = document.getElementById("li-signup");
-  if (signupBtn) signupBtn.onclick = doSignup;
+  document.getElementById("li-signup").onclick = doSignup;
 }
 
 async function doSignup() {
@@ -90,7 +86,12 @@ async function doSignup() {
   const err = document.getElementById("li-error");
   err.style.display = "none";
   if (!u.includes("@") || p.length < 6) {
-    err.textContent = "Use a valid email and password (min 6 chars) for Firebase signup.";
+    err.textContent = "Valid email + password (min 6 chars) required.";
+    err.style.display = "block";
+    return;
+  }
+  if (!window.SMSync || !window.SMSync.isReady()) {
+    err.textContent = "Firebase not ready. Check internet & config.";
     err.style.display = "block";
     return;
   }
@@ -99,7 +100,7 @@ async function doSignup() {
     state.user = { name: u.split("@")[0], role: "admin", email: u, firebase: true };
     await DB.put("settings", { id: "session", user: state.user });
     await logAudit("login", state.user.name + " signed up via Firebase");
-    toast("Account created & logged in");
+    toast("Account created");
     location.hash = "#/dashboard";
     router();
   } catch (e) {
@@ -114,40 +115,51 @@ async function doLogin() {
   const err = document.getElementById("li-error");
   err.style.display = "none";
 
-  // 1. Demo admin (always works offline)
-  if (u.toLowerCase() === DEMO_ADMIN.username && p === DEMO_ADMIN.password) {
-    state.user = { name: DEMO_ADMIN.name, role: "admin" };
+  if (!u || !p) {
+    err.textContent = "Enter email and password.";
+    err.style.display = "block";
+    return;
   }
-  // 2. Firebase Auth (email + password) when configured
-  else if (u.includes("@") && window.SMSync && window.SMSync.isConfigured() && window.SMSync.isReady()) {
+
+  // 1. Firebase Auth (primary)
+  if (window.SMSync && window.SMSync.isConfigured() && window.SMSync.isReady()) {
     try {
       const user = await SMSync.signIn(u, p);
       state.user = { name: user.displayName || u.split("@")[0], role: "admin", email: u, firebase: true, uid: user.uid };
       SMSync.pullAll().catch(console.warn);
+      await DB.put("settings", { id: "session", user: state.user });
+      await logAudit("login", state.user.name + " logged in");
+      location.hash = "#/dashboard";
+      router();
+      return;
     } catch (e) {
-      err.textContent = (e.code === "auth/user-not-found" || e.code === "auth/wrong-password" || e.code === "auth/invalid-credential")
-        ? "Invalid email or password."
-        : (e.message || "Firebase login failed");
-      err.style.display = "block";
-      return;
+      // fall through to staff PIN only if not an email-looking login
+      if (u.includes("@")) {
+        err.textContent = (e.code === "auth/user-not-found" || e.code === "auth/wrong-password" || e.code === "auth/invalid-credential")
+          ? "Invalid email or password."
+          : (e.message || "Login failed");
+        err.style.display = "block";
+        return;
+      }
     }
   }
-  // 3. Staff records (phone or name + PIN) — local
-  else {
-    const staffList = await DB.getAll("staff");
-    const match = staffList.find((s) => (s.phone === u || s.name === u) && String(s.pin) === p);
-    if (match) {
-      state.user = { name: match.name, role: match.role || "staff", staffId: match.id };
-    } else {
-      err.textContent = "Invalid username or password.";
-      err.style.display = "block";
-      return;
-    }
+
+  // 2. Staff PIN (local fallback — phone/name + PIN)
+  const staffList = await DB.getAll("staff");
+  const match = staffList.find((s) => (s.phone === u || s.name === u) && String(s.pin) === p);
+  if (match) {
+    state.user = { name: match.name, role: match.role || "staff", staffId: match.id };
+    await DB.put("settings", { id: "session", user: state.user });
+    await logAudit("login", state.user.name + " logged in");
+    location.hash = "#/dashboard";
+    router();
+    return;
   }
-  await DB.put("settings", { id: "session", user: state.user });
-  await logAudit("login", state.user.name + " logged in");
-  location.hash = "#/dashboard";
-  router();
+
+  err.textContent = window.SMSync && window.SMSync.isReady()
+    ? "Invalid email or password."
+    : "Firebase not ready. Check internet.";
+  err.style.display = "block";
 }
 
 async function logAudit(action, detail) {
@@ -370,9 +382,69 @@ function showInvoice(sale) {
   if (typeof QRCode !== "undefined") {
     new QRCode(document.getElementById("qr-code"), { text: qrPayload, width: 90, height: 90, correctLevel: QRCode.CorrectLevel.M });
   }
-  document.getElementById("thermal-print-btn").onclick = () => window.print();
+  document.getElementById("thermal-print-btn").onclick = async () => {
+    try {
+      await printSaleThermal(sale);
+    } catch (e) {
+      console.error(e);
+      toast(e.message || "Print failed");
+    }
+  };
   document.getElementById("invoice-close").onclick = () => { overlay.remove(); location.hash = "#/dashboard"; };
 }
+
+/** ESC/POS thermal print for POS invoice (Bluetooth / USB) */
+async function printSaleThermal(sale) {
+  if (typeof ThermalPrinter === "undefined") {
+    toast("Printer library missing");
+    return;
+  }
+  const printer = window.shopPrinter || new ThermalPrinter({ paperWidth: 80, chunkSize: 48, chunkDelay: 40, feedBeforeCut: 1, usePartialCut: true });
+  window.shopPrinter = printer;
+
+  if (!printer.isConnected) {
+    toast("Printer connect karo…");
+    const name = await printer.connect();
+    toast("Connected: " + name);
+  }
+
+  printer.setSettings({ paperWidth: 80 }); // shop receipts usually 80mm
+  const w = printer.charsPerLine;
+  const line = "-".repeat(Math.min(w, 42));
+  const thick = "=".repeat(Math.min(w, 42));
+
+  await printer.init();
+  await printer.printText("SANAULLAH MOBILE", { align: "center", bold: true });
+  await printer.printText("COMMUNICATION", { align: "center", bold: true });
+  await printer.printText("Sales · Accessories · Repairs", { align: "center" });
+  await printer.printText(line, { align: "center" });
+  await printer.printText("Invoice #" + (sale.invoiceNo || ""));
+  await printer.printText("Customer: " + (sale.customerName || "Walk-in"));
+  if (sale.customerPhone) await printer.printText("Phone: " + sale.customerPhone);
+  await printer.printText("Date: " + new Date(sale.date).toLocaleString());
+  await printer.printText(line, { align: "center" });
+
+  for (const item of (sale.items || [])) {
+    const name = String(item.name || "").slice(0, w - 10);
+    const amt = "Rs " + Number(item.price * item.qty).toLocaleString("en-PK");
+    await printer.printText(name + " x" + item.qty);
+    await printer.printText(amt, { align: "right" });
+  }
+
+  await printer.printText(line, { align: "center" });
+  await printer.printText("Subtotal: Rs " + Number(sale.subtotal || 0).toLocaleString("en-PK"));
+  if (sale.discount) await printer.printText("Discount: -Rs " + Number(sale.discount).toLocaleString("en-PK"));
+  await printer.printText(thick, { align: "center" });
+  await printer.printText("TOTAL: Rs " + Number(sale.total || 0).toLocaleString("en-PK"), { bold: true });
+  await printer.printText("Payment: " + (sale.payment || "Cash"));
+  await printer.printText(line, { align: "center" });
+  await printer.printText("Thank you for your business!", { align: "center" });
+  await printer.printSmall("Software by Fazal Khan Chandio", { align: "center" });
+  await printer.feed(printer.feedBeforeCut || 1);
+  await printer.doCut();
+  toast("Printed");
+}
+
 
 // ---------- Generic list-page builder for simple CRUD modules ----------
 function moduleListPage(opts) {
@@ -700,7 +772,13 @@ async function renderSettings() {
     </div>
     <div class="card">
       <div class="l-title" style="margin-bottom:6px">Firebase Sync</div>
-      <div class="l-sub">${window.SMSync && window.SMSync.isReady() ? "🟢 Connected — data syncs in real time." : "⚪ Not configured. Add your Firebase config in js/firebase-sync.js and uncomment the SDK script tags in index.html to enable real-time cloud sync."}</div>
+      <div class="l-sub">${window.SMSync && window.SMSync.isReady() ? "🟢 Connected — sync every 3 seconds + realtime." : "⚪ Firebase not ready. Check internet / Auth."}</div>
+    </div>
+    <div class="card">
+      <div class="l-title" style="margin-bottom:6px">Thermal Printer</div>
+      <div class="l-sub" style="margin-bottom:8px" id="printer-status">${window.shopPrinter && window.shopPrinter.isConnected ? "🟢 Printer connected" : "⚪ Not connected (Bluetooth / USB)"}</div>
+      <button class="btn full" id="printer-connect" style="margin-bottom:8px">🔌 Connect Printer</button>
+      <button class="btn full ghost" id="printer-test">Test Print</button>
     </div>
     ${state.user.role === "admin" ? `
     <div class="card">
@@ -744,6 +822,28 @@ async function renderSettings() {
     await DB.remove("settings", "session");
     location.hash = "";
     router();
+  };
+  const pConn = document.getElementById("printer-connect");
+  const pTest = document.getElementById("printer-test");
+  if (pConn) pConn.onclick = async () => {
+    try {
+      if (typeof ThermalPrinter === "undefined") { toast("Printer lib missing"); return; }
+      if (!window.shopPrinter) window.shopPrinter = new ThermalPrinter({ paperWidth: 80, debug: false });
+      const name = await window.shopPrinter.connect();
+      const st = document.getElementById("printer-status");
+      if (st) st.textContent = "🟢 " + name;
+      toast("Connected: " + name);
+    } catch (e) { toast(e.message || "Connect failed"); }
+  };
+  if (pTest) pTest.onclick = async () => {
+    try {
+      if (!window.shopPrinter || !window.shopPrinter.isConnected) {
+        toast("Pehle Connect Printer karo");
+        return;
+      }
+      await window.shopPrinter.printTest();
+      toast("Test printed");
+    } catch (e) { toast(e.message || "Test failed"); }
   };
   const csvInput = document.getElementById("csv-import");
   if (csvInput) csvInput.onchange = (e) => importProductsCSV(e.target.files[0]);

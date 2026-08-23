@@ -222,3 +222,10 @@ if (document.readyState === "loading") {
 window.addEventListener("online", () => {
   if (SMSync.isReady()) SMSync.flushQueue().catch(console.warn);
 });
+
+// Fast sync: flush pending writes every 3 seconds when online + logged in
+setInterval(() => {
+  if (navigator.onLine && window.SMSync && SMSync.isReady() && SMSync.currentUser()) {
+    SMSync.flushQueue().catch(() => {});
+  }
+}, 3000);
