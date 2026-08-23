@@ -252,13 +252,15 @@ async function renderPOS() {
   <div class="page">
     <h2>POS / Billing</h2>
     <div class="card">
-      <div class="form-row"><label>Customer</label>
+      <div class="form-row"><label>Saved Customer (optional)</label>
         <select id="pos-cust">
-          <option value="">— Select saved customer —</option>
+          <option value="">— Select to auto-fill —</option>
           ${customers.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}${c.phone ? " (" + escapeHtml(c.phone) + ")" : ""}</option>`).join("")}
         </select></div>
-      <div class="form-row"><label>Customer Name (manual)</label>
-        <input id="pos-cust-name" type="text" placeholder="Walk-in name type karo…" /></div>
+      <div class="form-row"><label>Customer Name *</label>
+        <input id="pos-cust-name" type="text" placeholder="Name type karo…" autocomplete="off" /></div>
+      <div class="form-row"><label>Phone</label>
+        <input id="pos-cust-phone" type="tel" placeholder="03xx…" autocomplete="off" /></div>
       <div class="form-row"><label>Add Product</label>
         <div style="display:flex;gap:8px">
           <select id="pos-product" style="flex:1">
@@ -279,14 +281,16 @@ async function renderPOS() {
   root.innerHTML = shell("pos", html);
   renderCart();
 
-  // Saved customer → fill manual name field
+  // Select only auto-fills name/phone — user can still edit freely
   document.getElementById("pos-cust").onchange = () => {
     const id = document.getElementById("pos-cust").value;
     const c = customers.find((x) => x.id === id);
-    document.getElementById("pos-cust-name").value = c ? c.name : "";
+    if (c) {
+      document.getElementById("pos-cust-name").value = c.name || "";
+      document.getElementById("pos-cust-phone").value = c.phone || "";
+    }
   };
 
-  // Product select → auto add to cart
   const addProductById = (id) => {
     const p = products.find((x) => x.id === id);
     if (!p) return;
@@ -301,16 +305,14 @@ async function renderPOS() {
     const id = document.getElementById("pos-product").value;
     if (!id) return;
     addProductById(id);
-    // reset dropdown so same product can be selected again
     document.getElementById("pos-product").value = "";
   };
 
   document.getElementById("pos-checkout").onclick = () => checkout(products, customers);
   document.getElementById("pos-scan").onclick = () => openBarcodeScanner((code) => {
     const match = products.find((p) => p.imei === code || p.id === code || (p.name && p.name.toLowerCase() === code.toLowerCase()));
-    if (match) {
-      addProductById(match.id);
-    } else toast("No product found for that code");
+    if (match) addProductById(match.id);
+    else toast("No product found for that code");
   });
 }
 function renderCart() {
@@ -322,8 +324,8 @@ function renderCart() {
     <div class="list-row" style="padding:8px 0">
       <div class="l-left"><div><div class="l-title">${escapeHtml(c.name)}</div><div class="l-sub">${fmt(c.price)} × ${c.qty}</div></div></div>
       <div style="display:flex;align-items:center;gap:8px">
-        <button class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},-1)">−</button>
-        <button class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},1)">+</button>
+        <button type="button" class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},-1)">−</button>
+        <button type="button" class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},1)">+</button>
       </div>
     </div>`).join("") + `<div style="text-align:right;font-weight:700;margin-top:8px">Total: ${fmt(total)}</div>`;
 }
@@ -334,6 +336,7 @@ async function checkout(products, customers) {
   const custId = document.getElementById("pos-cust").value;
   const cust = customers.find((c) => c.id === custId);
   const manualName = (document.getElementById("pos-cust-name")?.value || "").trim();
+  const manualPhone = (document.getElementById("pos-cust-phone")?.value || "").trim();
   const discount = Number(document.getElementById("pos-discount").value || 0);
   const payment = document.getElementById("pos-payment").value;
   const subtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
@@ -341,8 +344,10 @@ async function checkout(products, customers) {
   const profit = cart.reduce((a, c) => a + (c.price - c.cost) * c.qty, 0) - discount;
   const invoiceNo = "INV-" + (10000 + (await DB.getAll("sales")).length + 1);
   const customerName = manualName || (cust ? cust.name : "Walk-in Customer");
-  const sale = { invoiceNo, customerId: custId || null, customerName,
-    customerPhone: cust ? (cust.phone || "") : "", items: cart.map((c) => ({ id: c.id, name: c.name, price: c.price, cost: c.cost, qty: c.qty })), subtotal, discount, total, profit, payment, date: new Date().toISOString() };
+  const customerPhone = manualPhone || (cust ? (cust.phone || "") : "");
+  const sale = { invoiceNo, customerId: custId || null, customerName, customerPhone,
+    items: cart.map((c) => ({ id: c.id, name: c.name, price: c.price, cost: c.cost, qty: c.qty })),
+    subtotal, discount, total, profit, payment, date: new Date().toISOString() };
   await DB.put("sales", sale);
   for (const item of cart) {
     const p = products.find((x) => x.id === item.id);
@@ -789,7 +794,13 @@ async function renderSettings() {
     </div>
     <div class="card">
       <div class="l-title" style="margin-bottom:6px">Firebase Sync</div>
-      <div class="l-sub">${window.SMSync && window.SMSync.isReady() ? "🟢 Connected — sync every 3 seconds + realtime." : "⚪ Firebase not ready. Check internet / Auth."}</div>
+      <div class="l-sub" style="margin-bottom:8px">${window.SMSync && window.SMSync.isReady() && window.SMSync.currentUser()
+        ? "🟢 Signed in — sync every 3s + realtime."
+        : window.SMSync && window.SMSync.isReady()
+          ? "🟡 Firebase ready — login with Firebase email for cloud sync."
+          : "⚪ Firebase not ready."}</div>
+      <button class="btn full" id="sync-now" style="margin-bottom:8px">🔄 Sync Now</button>
+      <button class="btn full ghost" id="sync-clear">Clear pending queue</button>
     </div>
     <div class="card">
       <div class="l-title" style="margin-bottom:6px">Thermal Printer</div>
@@ -861,6 +872,23 @@ async function renderSettings() {
       await window.shopPrinter.printTest();
       toast("Test printed");
     } catch (e) { toast(e.message || "Test failed"); }
+  };
+  const syncNow = document.getElementById("sync-now");
+  const syncClear = document.getElementById("sync-clear");
+  if (syncNow) syncNow.onclick = async () => {
+    if (!window.SMSync || !SMSync.currentUser()) { toast("Firebase email se login karo"); return; }
+    toast("Syncing…");
+    await SMSync.flushQueue();
+    window._pendingCount = await DB.pendingSyncCount();
+    updateSyncStatusBar();
+    toast(window._pendingCount ? (window._pendingCount + " still pending") : "Synced");
+  };
+  if (syncClear) syncClear.onclick = async () => {
+    if (!confirm("Pending queue clear? Local data safe rahega.")) return;
+    await SMSync.clearPending();
+    window._pendingCount = 0;
+    updateSyncStatusBar();
+    toast("Queue cleared");
   };
   const csvInput = document.getElementById("csv-import");
   if (csvInput) csvInput.onchange = (e) => importProductsCSV(e.target.files[0]);
@@ -1017,10 +1045,25 @@ async function renderAuditLogs() {
 }
 
 // ---------- Boot ----------
-window.addEventListener("sm:queued", async () => { window._pendingCount = await DB.pendingSyncCount(); });
-window.addEventListener("sm:synced", async () => { window._pendingCount = await DB.pendingSyncCount(); router(); });
-window.addEventListener("online", () => router());
-window.addEventListener("offline", () => router());
+window.addEventListener("sm:queued", async () => {
+  window._pendingCount = await DB.pendingSyncCount();
+  updateSyncStatusBar();
+});
+window.addEventListener("sm:synced", async () => {
+  window._pendingCount = await DB.pendingSyncCount();
+  updateSyncStatusBar(); // do NOT router() — it wipes POS form inputs
+});
+window.addEventListener("online", () => updateSyncStatusBar());
+window.addEventListener("offline", () => updateSyncStatusBar());
+
+function updateSyncStatusBar() {
+  const el = document.querySelector(".sync-status");
+  if (!el || !state.user) return;
+  const pending = window._pendingCount || 0;
+  el.textContent = (navigator.onLine ? "🟢 Online" : "🟠 Offline")
+    + (pending ? " · " + pending + " pending sync" : " · synced")
+    + " · " + (state.user.role || "admin");
+}
 
 (async function boot() {
   await tryRestoreSession();
