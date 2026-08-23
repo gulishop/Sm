@@ -1,5 +1,5 @@
 /* Minimal service worker — cache shell for offline */
-const CACHE = "sm-shell-v2";
+const CACHE = "sm-shell-v4";
 const ASSETS = [
   "./",
   "./index.html",
@@ -7,6 +7,7 @@ const ASSETS = [
   "./js/db.js",
   "./js/firebase-sync.js",
   "./js/app.js",
+  "./js/thermal-printer.js",
   "./manifest.json"
 ];
 
