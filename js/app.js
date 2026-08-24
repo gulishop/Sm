@@ -348,7 +348,11 @@ function salesRow(s) {
     </div>
     <div style="text-align:right">
       <div class="l-title">${fmt(s.total)}</div>
-      <button class="btn ghost" style="padding:4px 10px;margin-top:4px;font-size:11px" onclick='reprintInvoice("${s.id}")'>🖨️ Duplicate</button>
+      <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn ghost" style="padding:4px 10px;font-size:11px" onclick='editInvoiceForm("${s.id}")'>✏️ Edit</button>
+        <button class="btn ghost" style="padding:4px 10px;font-size:11px" onclick='reprintInvoice("${s.id}")'>🖨️</button>
+        <button class="btn ghost" style="padding:4px 10px;font-size:11px;color:var(--red)" onclick='deleteInvoice("${s.id}")'>🗑️</button>
+      </div>
     </div>
   </div>`;
 }
@@ -356,6 +360,106 @@ window.reprintInvoice = async (id) => {
   const sale = await DB.get("sales", id);
   if (!sale) { toast("Invoice not found"); return; }
   showInvoice({ ...sale, _duplicate: true }, { duplicate: true });
+};
+window.deleteInvoice = async (id) => {
+  const sale = await DB.get("sales", id);
+  if (!sale) { toast("Invoice not found"); return; }
+  if (!confirm(`Invoice #${sale.invoiceNo || sale.id} delete karein? Ye action wapis nahi ho sakta.`)) return;
+  // Stock wapas
+  const products = await DB.getAll("products");
+  for (const it of (sale.items || [])) {
+    const p = products.find((x) => x.id === it.id);
+    if (p) {
+      p.qty = Number(p.qty || 0) + Number(it.qty || 0);
+      if (p.soldInvoice) delete p.soldInvoice;
+      await DB.put("products", p);
+    }
+  }
+  await DB.remove("sales", id);
+  await logAudit("delete", `Deleted Invoice: ${sale.invoiceNo || sale.id} (${sale.customerName || "Walk-in"}, ${fmt(sale.total)})`);
+  toast("Invoice deleted · stock restored");
+  renderSalesList();
+};
+window.editInvoiceForm = async (id) => {
+  const sale = await DB.get("sales", id);
+  if (!sale) { toast("Invoice not found"); return; }
+  const products = await DB.getAll("products");
+  const overlay = document.createElement("div");
+  overlay.id = "invoice-edit-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end";
+  const knownPayments = ["cash", "card", "credit", "Cash", "Card", "Credit", "Bank Transfer", "Installment"];
+  const itemsRows = (sale.items || []).map((it, idx) => `
+    <div class="form-row" style="display:flex;align-items:center;gap:10px">
+      <div style="flex:1">
+        <div style="font-weight:600">${escapeHtml(it.name)}</div>
+        <div style="font-size:11px;color:var(--muted)">${fmt(it.price)} each</div>
+      </div>
+      <input type="number" min="0" value="${it.qty}" data-idx="${idx}" class="edit-item-qty" style="width:70px;text-align:center" />
+    </div>`).join("");
+  overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px;max-height:85vh;overflow:auto">
+    <h2 style="margin-top:0">Edit Invoice #${escapeHtml(sale.invoiceNo || sale.id)}</h2>
+    <div class="form-row"><label>Customer Name</label><input id="ei-name" value="${escapeHtml(sale.customerName || "")}" /></div>
+    <div class="form-row"><label>Customer Phone</label><input id="ei-phone" value="${escapeHtml(sale.customerPhone || "")}" /></div>
+    <div class="form-row"><label>Payment</label>
+      <select id="ei-payment">
+        <option value="Cash" ${sale.payment === "Cash" || sale.payment === "cash" ? "selected" : ""}>Cash</option>
+        <option value="Card" ${sale.payment === "Card" || sale.payment === "card" ? "selected" : ""}>Card</option>
+        <option value="Bank Transfer" ${sale.payment === "Bank Transfer" ? "selected" : ""}>Bank Transfer</option>
+        <option value="Credit" ${sale.payment === "Credit" || sale.payment === "credit" ? "selected" : ""}>Credit</option>
+        <option value="Installment" ${sale.payment === "Installment" ? "selected" : ""}>Installment</option>
+      </select>
+    </div>
+    <div class="form-row"><label>Discount</label><input id="ei-discount" type="number" value="${Number(sale.discount || 0)}" /></div>
+    <div style="font-weight:700;margin:12px 0 4px">Items (qty 0 = remove)</div>
+    <div id="ei-items">${itemsRows || `<div class="empty">No items</div>`}</div>
+    <button class="btn full" id="ei-save" style="margin-top:14px">Save Changes</button>
+    <button class="btn ghost full" id="ei-cancel" style="margin-top:8px">Cancel</button>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#ei-cancel").onclick = () => overlay.remove();
+  overlay.querySelector("#ei-save").onclick = async () => {
+    const newName = overlay.querySelector("#ei-name").value.trim() || "Walk-in Customer";
+    const newPhone = overlay.querySelector("#ei-phone").value.trim();
+    const newPayment = overlay.querySelector("#ei-payment").value;
+    const newDiscount = Number(overlay.querySelector("#ei-discount").value || 0);
+    const qtyInputs = overlay.querySelectorAll(".edit-item-qty");
+    const newItems = (sale.items || [])
+      .map((it, idx) => ({ ...it, qty: Math.max(0, Number(qtyInputs[idx].value || 0)) }))
+      .filter((it) => it.qty > 0);
+
+    const touched = new Set();
+    for (const oldItem of (sale.items || [])) {
+      const p = products.find((x) => x.id === oldItem.id);
+      if (p) { p.qty = Number(p.qty || 0) + Number(oldItem.qty || 0); touched.add(p.id); }
+    }
+    for (const newItem of newItems) {
+      const p = products.find((x) => x.id === newItem.id);
+      if (p) { p.qty = Math.max(0, Number(p.qty || 0) - Number(newItem.qty || 0)); touched.add(p.id); }
+    }
+    for (const p of products) {
+      if (touched.has(p.id)) await DB.put("products", p);
+    }
+
+    const subtotal = newItems.reduce((a, c) => a + c.price * c.qty, 0);
+    const total = Math.max(0, subtotal - newDiscount);
+    const profit = newItems.reduce((a, c) => a + ((c.price || 0) - (c.cost || 0)) * c.qty, 0) - newDiscount;
+
+    sale.customerName = newName;
+    sale.customerPhone = newPhone;
+    sale.payment = newPayment;
+    sale.discount = newDiscount;
+    sale.items = newItems;
+    sale.subtotal = subtotal;
+    sale.total = total;
+    sale.profit = profit;
+    sale.updatedAt = Date.now();
+
+    await DB.put("sales", sale);
+    await logAudit("update", `Edited Invoice: ${sale.invoiceNo || sale.id} — ${fmt(total)}`);
+    overlay.remove();
+    toast("Invoice updated");
+    renderSalesList();
+  };
 };
 
 async function renderPOS() {
@@ -815,22 +919,97 @@ window.customersOpts = customersOpts;
 const renderCustomers = moduleListPage(customersOpts);
 
 window.showLedger = async (customerId, name) => {
-  const [sales, installments] = await Promise.all([DB.getAll("sales"), DB.getAll("installments")]);
-  const custSales = sales.filter((s) => s.customerId === customerId);
-  const custInst = installments.filter((i) => i.customerName === name);
-  const totalSpent = custSales.reduce((a, s) => a + Number(s.total || 0), 0);
+  const [sales, installments, returnsList] = await Promise.all([
+    DB.getAll("sales"), DB.getAll("installments"), DB.getAll("returns")
+  ]);
+  const nameLower = (name || "").toLowerCase();
+  const custSales = sales.filter((s) =>
+    s.customerId === customerId || (s.customerName || "").toLowerCase() === nameLower
+  );
+  const custInst = installments.filter((i) => (i.customerName || "").toLowerCase() === nameLower);
+  const custReturns = returnsList.filter((r) => (r.customerName || "").toLowerCase() === nameLower);
+
+  // + = Diye (customer paid), - = Liye (customer took / sale on credit)
+  const txns = [];
+  custSales.forEach((s) => {
+    const pay = (s.payment || "").toLowerCase();
+    const isCredit = pay === "credit" || pay === "installment";
+    txns.push({
+      date: s.date || "",
+      label: "Sale #" + (s.invoiceNo || s.id),
+      amount: -Number(s.total || 0),
+      note: s.payment || ""
+    });
+    if (!isCredit) {
+      txns.push({
+        date: s.date || "",
+        label: "Payment (" + (s.payment || "Cash") + ")",
+        amount: +Number(s.total || 0),
+        note: "#" + (s.invoiceNo || "")
+      });
+    }
+  });
+  custInst.forEach((i) => {
+    const paid = Number(i.paid || 0);
+    if (paid > 0) {
+      txns.push({
+        date: i.updatedAt ? new Date(i.updatedAt).toISOString() : (i.dueDate || ""),
+        label: "Installment paid — " + (i.item || ""),
+        amount: +paid,
+        note: ""
+      });
+    }
+    const remaining = Number(i.remaining != null ? i.remaining : (Number(i.totalAmount || 0) - paid));
+    if (remaining > 0) {
+      txns.push({
+        date: i.dueDate || "",
+        label: "Due — " + (i.item || ""),
+        amount: -remaining,
+        note: i.status || ""
+      });
+    }
+  });
+  custReturns.forEach((r) => {
+    txns.push({
+      date: r.date || "",
+      label: "Return — " + (r.item || r.invoiceNo || ""),
+      amount: +Number(r.amount || 0),
+      note: r.status || ""
+    });
+  });
+  txns.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+  let balance = 0;
+  const rows = txns.map((t) => {
+    balance += t.amount;
+    const diye = t.amount > 0 ? fmt(t.amount) : "—";
+    const liye = t.amount < 0 ? fmt(Math.abs(t.amount)) : "—";
+    return `<div class="list-row" style="align-items:flex-start">
+      <div class="l-left" style="flex:1">
+        <div class="l-title">${escapeHtml(t.label)}</div>
+        <div class="l-sub">${(t.date || "").slice(0, 16).replace("T", " ")}${t.note ? " · " + escapeHtml(t.note) : ""}</div>
+      </div>
+      <div style="text-align:right;min-width:120px">
+        <div style="font-size:12px">Diye: <b style="color:var(--green)">${diye}</b></div>
+        <div style="font-size:12px">Liye: <b style="color:var(--red)">${liye}</b></div>
+      </div>
+    </div>`;
+  }).join("");
+
   const overlay = document.createElement("div");
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end";
   overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px;max-height:85vh;overflow:auto">
-    <h2 style="margin-top:0">${escapeHtml(name)}'s Ledger</h2>
-    <div class="card">Total Spent: ${fmt(totalSpent)} · ${custSales.length} invoices</div>
-    ${custSales.map((s) => `<div class="list-row">
-      <div class="l-title">Invoice #${escapeHtml(s.invoiceNo)}</div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <div class="l-title">${fmt(s.total)}</div>
-        <button class="btn ghost" style="padding:4px 8px;font-size:11px" onclick='reprintInvoice("${s.id}")'>🖨️</button>
-      </div></div>`).join("")}
-    ${custInst.length ? `<div class="section-title" style="padding-left:0">Installments</div>` + custInst.map((i) => `<div class="list-row"><div class="l-title">${escapeHtml(i.item)}</div><div class="l-title">${fmt(i.remaining)} left</div></div>`).join("") : ""}
+    <h2 style="margin-top:0">${escapeHtml(name)} — Ledger</h2>
+    <div class="card" style="margin-bottom:12px">
+      <div class="l-sub">Current Balance</div>
+      <div class="l-title" style="font-size:18px;color:${balance >= 0 ? "var(--green)" : "var(--red)"}">
+        ${balance >= 0
+          ? "Customer ne diye / advance: " + fmt(balance)
+          : "Customer se lena baqi: " + fmt(Math.abs(balance))}
+      </div>
+      <div class="l-sub">${custSales.length} sales · ${custInst.length} installments · ${custReturns.length} returns</div>
+    </div>
+    ${rows || `<div class="empty">Koi transaction nahi</div>`}
     <button class="btn full ghost" id="ledger-close" style="margin-top:12px">Close</button>
   </div>`;
   document.body.appendChild(overlay);
@@ -1472,24 +1651,6 @@ function updateSyncStatusBar() {
   await tryRestoreSession();
   window._pendingCount = await DB.pendingSyncCount();
   router();
-
-  // App open hote hi auto sync (cloud se data pull + local queue flush)
-  if (window.SMSync && SMSync.isReady && SMSync.currentUser && SMSync.currentUser()) {
-    setTimeout(async () => {
-      try {
-        await SMSync.pullAll();
-        await SMSync.flushQueue();
-        window._pendingCount = await DB.pendingSyncCount();
-        updateSyncStatusBar();
-        // Agar dashboard open hai to refresh
-        const h = location.hash.replace("#/", "").split("?")[0];
-        if (!h || h === "dashboard") router();
-      } catch (e) {
-        console.warn("Auto sync on open failed", e);
-      }
-    }, 1200);
-  }
-
   // Daily backup reminder (once per calendar day)
   try {
     const last = localStorage.getItem("sm_last_backup_day");
