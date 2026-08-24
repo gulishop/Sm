@@ -17,6 +17,70 @@ function toast(msg) {
   setTimeout(() => t.remove(), 2200);
 }
 
+/** App-style modal — no browser "hostname says" bar */
+function appPrompt({ title = "", message = "", defaultValue = "", placeholder = "", inputType = "text", okText = "OK", cancelText = "Cancel" } = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px";
+    overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:360px;border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,.25)">
+      ${title ? `<div style="font-weight:800;font-size:16px;margin-bottom:8px">${escapeHtml(title)}</div>` : ""}
+      ${message ? `<div style="font-size:13px;color:var(--muted);margin-bottom:14px;white-space:pre-line;line-height:1.45">${escapeHtml(message)}</div>` : ""}
+      <input id="app-prompt-input" type="${inputType}" value="${escapeHtml(String(defaultValue ?? ""))}" placeholder="${escapeHtml(placeholder)}"
+        style="width:100%;box-sizing:border-box;padding:12px 14px;border-radius:10px;border:1px solid var(--border,#ddd);font-size:16px;margin-bottom:14px;background:var(--bg,#fff);color:inherit" />
+      <div style="display:flex;gap:10px">
+        <button class="btn ghost full" id="app-prompt-cancel" style="flex:1">${escapeHtml(cancelText)}</button>
+        <button class="btn full" id="app-prompt-ok" style="flex:1">${escapeHtml(okText)}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector("#app-prompt-input");
+    const close = (val) => { overlay.remove(); resolve(val); };
+    overlay.querySelector("#app-prompt-cancel").onclick = () => close(null);
+    overlay.querySelector("#app-prompt-ok").onclick = () => close(input.value);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") close(input.value);
+      if (e.key === "Escape") close(null);
+    });
+    setTimeout(() => { input.focus(); input.select(); }, 50);
+  });
+}
+
+function appConfirm({ title = "", message = "", okText = "OK", cancelText = "Cancel", danger = false } = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px";
+    overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:360px;border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,.25)">
+      ${title ? `<div style="font-weight:800;font-size:16px;margin-bottom:8px">${escapeHtml(title)}</div>` : ""}
+      ${message ? `<div style="font-size:13px;color:var(--muted);margin-bottom:16px;white-space:pre-line;line-height:1.45">${escapeHtml(message)}</div>` : ""}
+      <div style="display:flex;gap:10px">
+        <button class="btn ghost full" id="app-confirm-cancel" style="flex:1">${escapeHtml(cancelText)}</button>
+        <button class="btn full${danger ? " danger" : ""}" id="app-confirm-ok" style="flex:1">${escapeHtml(okText)}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(overlay);
+    const close = (val) => { overlay.remove(); resolve(val); };
+    overlay.querySelector("#app-confirm-cancel").onclick = () => close(false);
+    overlay.querySelector("#app-confirm-ok").onclick = () => close(true);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(false); });
+  });
+}
+
+function appAlert({ title = "", message = "", okText = "OK" } = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px";
+    overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:360px;border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,.25)">
+      ${title ? `<div style="font-weight:800;font-size:16px;margin-bottom:8px">${escapeHtml(title)}</div>` : ""}
+      ${message ? `<div style="font-size:13px;color:var(--muted);margin-bottom:16px;white-space:pre-line;line-height:1.45">${escapeHtml(message)}</div>` : ""}
+      <button class="btn full" id="app-alert-ok">${escapeHtml(okText)}</button>
+    </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector("#app-alert-ok").onclick = () => { overlay.remove(); resolve(); };
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) { overlay.remove(); resolve(); } });
+  });
+}
+
 // ---------- Routing ----------
 const routes = {
   "": () => renderDashboard(),
@@ -364,7 +428,13 @@ window.reprintInvoice = async (id) => {
 window.deleteInvoice = async (id) => {
   const sale = await DB.get("sales", id);
   if (!sale) { toast("Invoice not found"); return; }
-  if (!confirm(`Invoice #${sale.invoiceNo || sale.id} delete karein? Ye action wapis nahi ho sakta.`)) return;
+  if (!(await appConfirm({
+    title: "Delete Invoice?",
+    message: `Invoice #${sale.invoiceNo || sale.id} delete karein?\nYe action wapis nahi ho sakta.`,
+    okText: "Delete",
+    cancelText: "Cancel",
+    danger: true
+  }))) return;
   // Stock wapas
   const products = await DB.getAll("products");
   for (const it of (sale.items || [])) {
@@ -550,8 +620,8 @@ window.cartQty = (i, d) => { cart[i].qty += d; if (cart[i].qty <= 0) cart.splice
 
 async function checkout(products, customers) {
   if (!cart.length) { toast("Cart is empty"); return; }
-  const custId = document.getElementById("pos-cust").value;
-  const cust = customers.find((c) => c.id === custId);
+  let custId = document.getElementById("pos-cust").value;
+  let cust = customers.find((c) => c.id === custId);
   const manualName = (document.getElementById("pos-cust-name")?.value || "").trim();
   const manualPhone = (document.getElementById("pos-cust-phone")?.value || "").trim();
   const discount = Number(document.getElementById("pos-discount").value || 0);
@@ -562,9 +632,46 @@ async function checkout(products, customers) {
   const invoiceNo = "INV-" + (10000 + (await DB.getAll("sales")).length + 1);
   const customerName = manualName || (cust ? cust.name : "Walk-in Customer");
   const customerPhone = manualPhone || (cust ? (cust.phone || "") : "");
-  const sale = { invoiceNo, customerId: custId || null, customerName, customerPhone,
+
+  // Auto-create / link customer if name given
+  if (customerName && customerName !== "Walk-in Customer" && !cust) {
+    const allCust = await DB.getAll("customers");
+    cust = allCust.find((c) =>
+      (c.name || "").toLowerCase() === customerName.toLowerCase() ||
+      (customerPhone && c.phone === customerPhone)
+    );
+    if (!cust) {
+      cust = { name: customerName, phone: customerPhone, points: 0 };
+      await DB.put("customers", cust);
+      custId = cust.id;
+    } else {
+      custId = cust.id;
+      if (customerPhone && !cust.phone) { cust.phone = customerPhone; await DB.put("customers", cust); }
+    }
+  }
+
+  // Installment: ask how much paid now (advance) — app modal, no browser domain
+  let advancePaid = 0;
+  if ((payment || "").toLowerCase() === "installment") {
+    const raw = await appPrompt({
+      title: "Installment — Advance",
+      message: "Total: " + fmt(total) + "\n\nAbhi customer ne kitna diya?\n(advance / down payment)\n0 likho agar kuch nahi diya.",
+      defaultValue: "0",
+      inputType: "number",
+      okText: "Continue",
+      cancelText: "Cancel"
+    });
+    if (raw == null) return;
+    advancePaid = Math.max(0, Number(raw) || 0);
+    if (advancePaid > total) advancePaid = total;
+  }
+
+  const sale = {
+    invoiceNo, customerId: custId || null, customerName, customerPhone,
     items: cart.map((c) => ({ id: c.id, name: c.name, price: c.price, cost: c.cost, qty: c.qty })),
-    subtotal, discount, total, profit, payment, date: new Date().toISOString() };
+    subtotal, discount, total, profit, payment, date: new Date().toISOString(),
+    advancePaid: (payment || "").toLowerCase() === "installment" ? advancePaid : undefined
+  };
   await DB.put("sales", sale);
   for (const item of cart) {
     const p = products.find((x) => x.id === item.id);
@@ -575,12 +682,35 @@ async function checkout(products, customers) {
     }
   }
   if (cust) {
-    cust.points = Number(cust.points || 0) + Math.floor(total / 1000); // 1 loyalty point per Rs 1000 spent
+    cust.points = Number(cust.points || 0) + Math.floor(total / 1000);
     await DB.put("customers", cust);
   }
+
+  // Auto-create installment plan
+  if ((payment || "").toLowerCase() === "installment") {
+    const itemNames = cart.map((c) => c.name + (c.qty > 1 ? " x" + c.qty : "")).join(", ");
+    const remaining = Math.max(0, total - advancePaid);
+    const inst = {
+      customerName,
+      customerId: custId || null,
+      customerPhone,
+      item: itemNames,
+      invoiceNo,
+      totalAmount: total,
+      paid: advancePaid,
+      remaining,
+      dueDate: todayKey(),
+      status: remaining <= 0 ? "paid" : "active",
+      updatedAt: Date.now()
+    };
+    await DB.put("installments", inst);
+    await logAudit("installment", `Plan ${invoiceNo}: Total ${fmt(total)}, Paid ${fmt(advancePaid)}, Baki ${fmt(remaining)}`);
+    toast(`Installment: Total ${fmt(total)} · Diya ${fmt(advancePaid)} · Baki ${fmt(remaining)}`);
+  }
+
   await logAudit("sale", `Invoice ${invoiceNo} created for ${sale.customerName} — ${fmt(total)}`);
   cart = [];
-  toast("Invoice " + invoiceNo + " created");
+  if ((payment || "").toLowerCase() !== "installment") toast("Invoice " + invoiceNo + " created");
   showInvoice(sale);
 }
 
@@ -856,7 +986,8 @@ function openForm(opts, existing) {
     await DB.put(opts.store, record);
     await logAudit(existing ? "update" : "create", `${existing ? "Updated" : "Created"} ${opts.title.replace(/s$/, "")}: ${record.name || record.title || record.customerName || record.supplierName || record.id}`);
     overlay.remove();
-    toast("Saved");
+    if (opts.afterSave) opts.afterSave(record);
+    else toast("Saved");
     router();
   };
   if (existing) {
@@ -926,14 +1057,21 @@ window.showLedger = async (customerId, name) => {
   const custSales = sales.filter((s) =>
     s.customerId === customerId || (s.customerName || "").toLowerCase() === nameLower
   );
-  const custInst = installments.filter((i) => (i.customerName || "").toLowerCase() === nameLower);
+  const custInst = installments.filter((i) =>
+    (i.customerId && i.customerId === customerId) ||
+    (i.customerName || "").toLowerCase() === nameLower
+  );
   const custReturns = returnsList.filter((r) => (r.customerName || "").toLowerCase() === nameLower);
 
-  // + = Diye (customer paid), - = Liye (customer took / sale on credit)
+  // Traditional ledger: Sale = full Liye (debit). Payments = Diye (credit).
+  // Do NOT add separate "Due remaining" rows — balance already shows baki.
+  // Avoid double-count when both sale + installment plan exist.
   const txns = [];
+  const saleInvoiceNos = new Set();
   custSales.forEach((s) => {
     const pay = (s.payment || "").toLowerCase();
     const isCredit = pay === "credit" || pay === "installment";
+    saleInvoiceNos.add(String(s.invoiceNo || s.id || "").toLowerCase());
     txns.push({
       date: s.date || "",
       label: "Sale #" + (s.invoiceNo || s.id),
@@ -941,32 +1079,56 @@ window.showLedger = async (customerId, name) => {
       note: s.payment || ""
     });
     if (!isCredit) {
+      // Full payment at sale time
       txns.push({
         date: s.date || "",
         label: "Payment (" + (s.payment || "Cash") + ")",
         amount: +Number(s.total || 0),
         note: "#" + (s.invoiceNo || "")
       });
+    } else if (Number(s.advancePaid || 0) > 0) {
+      // Down payment recorded on sale
+      txns.push({
+        date: s.date || "",
+        label: "Advance / Down payment",
+        amount: +Number(s.advancePaid),
+        note: "#" + (s.invoiceNo || "")
+      });
     }
   });
   custInst.forEach((i) => {
     const paid = Number(i.paid || 0);
-    if (paid > 0) {
+    const invKey = String(i.invoiceNo || "").toLowerCase();
+    const linkedToSale = invKey && saleInvoiceNos.has(invKey);
+    if (linkedToSale) {
+      // Sale already put full Liye + advancePaid as Diye. Only record payments beyond advance.
+      const linkedSale = custSales.find((s) => String(s.invoiceNo || s.id || "").toLowerCase() === invKey);
+      const adv = Number(linkedSale && linkedSale.advancePaid || 0);
+      const extraPaid = Math.max(0, paid - adv);
+      if (extraPaid > 0) {
+        txns.push({
+          date: i.updatedAt ? new Date(i.updatedAt).toISOString() : (i.dueDate || ""),
+          label: "Installment paid — " + (i.item || i.invoiceNo || ""),
+          amount: +extraPaid,
+          note: "Total paid " + fmt(paid) + " / " + fmt(i.totalAmount || 0)
+        });
+      }
+    } else if (Number(i.totalAmount || 0) > 0) {
+      // Manual plan (no POS sale): full amount Liye, then payments Diye
       txns.push({
-        date: i.updatedAt ? new Date(i.updatedAt).toISOString() : (i.dueDate || ""),
-        label: "Installment paid — " + (i.item || ""),
-        amount: +paid,
-        note: ""
-      });
-    }
-    const remaining = Number(i.remaining != null ? i.remaining : (Number(i.totalAmount || 0) - paid));
-    if (remaining > 0) {
-      txns.push({
-        date: i.dueDate || "",
-        label: "Due — " + (i.item || ""),
-        amount: -remaining,
+        date: i.dueDate || (i.updatedAt ? new Date(i.updatedAt).toISOString() : ""),
+        label: "Installment plan — " + (i.item || ""),
+        amount: -Number(i.totalAmount || 0),
         note: i.status || ""
       });
+      if (paid > 0) {
+        txns.push({
+          date: i.updatedAt ? new Date(i.updatedAt).toISOString() : (i.dueDate || ""),
+          label: "Installment paid — " + (i.item || ""),
+          amount: +paid,
+          note: "Baki " + fmt(Math.max(0, Number(i.totalAmount || 0) - paid))
+        });
+      }
     }
   });
   custReturns.forEach((r) => {
@@ -996,6 +1158,24 @@ window.showLedger = async (customerId, name) => {
     </div>`;
   }).join("");
 
+  // Summary of open installment plans for this customer
+  const openPlans = custInst.filter((i) => (i.status || "") !== "paid" && Number(i.remaining || 0) > 0);
+  const totalBaki = openPlans.reduce((a, i) => a + Number(i.remaining || 0), 0);
+  const plansHtml = openPlans.length ? `
+    <div class="card" style="margin-bottom:12px;border:1px solid var(--orange)">
+      <div class="l-sub">Open Installments</div>
+      ${openPlans.map((i) => `
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:6px;gap:8px">
+          <span>${escapeHtml(i.item || i.invoiceNo || "")}</span>
+          <span style="text-align:right">
+            <b>Total ${fmt(i.totalAmount)}</b><br/>
+            <span style="color:var(--green)">Diya ${fmt(i.paid || 0)}</span> ·
+            <span style="color:var(--red)">Baki ${fmt(i.remaining)}</span>
+          </span>
+        </div>`).join("")}
+      <div style="margin-top:8px;font-weight:700;color:var(--red)">Kul baki: ${fmt(totalBaki)}</div>
+    </div>` : "";
+
   const overlay = document.createElement("div");
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end";
   overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px;max-height:85vh;overflow:auto">
@@ -1009,6 +1189,7 @@ window.showLedger = async (customerId, name) => {
       </div>
       <div class="l-sub">${custSales.length} sales · ${custInst.length} installments · ${custReturns.length} returns</div>
     </div>
+    ${plansHtml}
     ${rows || `<div class="empty">Koi transaction nahi</div>`}
     <button class="btn full ghost" id="ledger-close" style="margin-top:12px">Close</button>
   </div>`;
@@ -1055,25 +1236,42 @@ const installmentsOpts = {
   fields: [
     { key: "customerName", label: "Customer Name" },
     { key: "item", label: "Item" },
+    { key: "invoiceNo", label: "Invoice # (optional)" },
     { key: "totalAmount", label: "Total Amount", type: "number" },
-    { key: "paid", label: "Amount Paid", type: "number", default: 0 },
+    { key: "paid", label: "Amount Paid (abhi tak)", type: "number", default: 0 },
     { key: "dueDate", label: "Next Due Date", type: "date" },
     { key: "status", label: "Status", type: "select", options: [
       { value: "active", label: "Active" }, { value: "paid", label: "Paid" }, { value: "overdue", label: "Overdue" }
     ] },
   ],
-    beforeSave: (r) => { r.remaining = Number(r.totalAmount || 0) - Number(r.paid || 0); if (r.remaining <= 0) r.status = "paid"; },
-  renderRow: (i) => `<div class="list-row">
+  beforeSave: (r) => {
+    r.remaining = Math.max(0, Number(r.totalAmount || 0) - Number(r.paid || 0));
+    if (r.remaining <= 0) r.status = "paid";
+    else if (!r.status || r.status === "paid") r.status = "active";
+    r.updatedAt = Date.now();
+  },
+  afterSave: (r) => {
+    toast(`Saved · Total ${fmt(r.totalAmount)} · Diya ${fmt(r.paid || 0)} · Baki ${fmt(r.remaining)}`);
+  },
+  renderRow: (i) => {
+    const total = Number(i.totalAmount || 0);
+    const paid = Number(i.paid || 0);
+    const rem = Number(i.remaining != null ? i.remaining : total - paid);
+    return `<div class="list-row">
     <div class="l-left" style="flex:1;cursor:pointer" onclick='editItem("installments","${i.id}", installmentsOpts)'>
       <div class="dot" style="background:var(--blue)">📅</div>
-      <div><div class="l-title">${escapeHtml(i.customerName || "")}</div>
-      <div class="l-sub">${escapeHtml(i.item || "")} · Due ${escapeHtml(i.dueDate || "-")}</div></div>
+      <div>
+        <div class="l-title">${escapeHtml(i.customerName || "")}</div>
+        <div class="l-sub">${escapeHtml(i.item || "")}${i.invoiceNo ? " · #" + escapeHtml(i.invoiceNo) : ""} · Due ${escapeHtml(i.dueDate || "-")}</div>
+        <div class="l-sub" style="margin-top:2px">Total ${fmt(total)} · <span style="color:var(--green)">Diya ${fmt(paid)}</span> · <span style="color:var(--red)">Baki ${fmt(rem)}</span></div>
+      </div>
     </div>
     <div style="text-align:right">
-      <div class="l-title">${fmt(i.remaining)}</div>
-      <span class="pill ${i.status === "paid" ? "ok" : "warn"}">${i.status}</span>
+      <div class="l-title" style="color:var(--red)">${fmt(rem)}</div>
+      <span class="pill ${i.status === "paid" ? "ok" : "warn"}">${i.status || "active"}</span>
       ${i.status !== "paid" ? `<button class="btn" style="padding:3px 8px;margin-top:4px;font-size:11px" onclick='event.stopPropagation();receiveInstallment("${i.id}")'>💵 Pay</button>` : ""}
-    </div></div>`
+    </div></div>`;
+  }
 };
 window.installmentsOpts = installmentsOpts;
 const renderInstallments = moduleListPage(installmentsOpts);
@@ -1081,25 +1279,44 @@ const renderInstallments = moduleListPage(installmentsOpts);
 window.receiveInstallment = async (id) => {
   const row = await DB.get("installments", id);
   if (!row) return;
-  const rem = Number(row.remaining != null ? row.remaining : (Number(row.totalAmount||0) - Number(row.paid||0)));
-  const raw = prompt("Receive amount (Rs). Remaining: " + rem, String(rem));
+  const total = Number(row.totalAmount || 0);
+  const paidSoFar = Number(row.paid || 0);
+  const rem = Number(row.remaining != null ? row.remaining : (total - paidSoFar));
+  const raw = await appPrompt({
+    title: "Installment Receive",
+    message: "Customer: " + (row.customerName || "") +
+      "\nItem: " + (row.item || "") +
+      "\nTotal: " + fmt(total) +
+      "\nAbhi tak diya: " + fmt(paidSoFar) +
+      "\nBaki: " + fmt(rem) +
+      "\n\nAb kitna receive karna hai?",
+    defaultValue: String(rem),
+    inputType: "number",
+    okText: "Receive",
+    cancelText: "Cancel"
+  });
   if (raw == null) return;
   const amt = Number(raw);
   if (!(amt > 0)) { toast("Invalid amount"); return; }
-  row.paid = Number(row.paid || 0) + amt;
-  row.remaining = Math.max(0, Number(row.totalAmount || 0) - row.paid);
+  row.paid = paidSoFar + amt;
+  row.remaining = Math.max(0, total - row.paid);
   if (row.remaining <= 0) row.status = "paid";
+  row.updatedAt = Date.now();
   await DB.put("installments", row);
-  await logAudit("installment", "Payment " + fmt(amt) + " from " + (row.customerName || ""));
-  toast("Received " + fmt(amt));
-  // quick receipt overlay
-  const msg = "Sanaullah Mobile Communication\nInstallment Receipt\n" + (row.customerName||"") + "\nPaid: " + fmt(amt) + "\nRemaining: " + fmt(row.remaining);
-  if (confirm("Print / show receipt?")) {
+  await logAudit("installment", "Payment " + fmt(amt) + " from " + (row.customerName || "") + " · Baki " + fmt(row.remaining));
+  toast(`Received ${fmt(amt)} · Total ${fmt(total)} · Diya ${fmt(row.paid)} · Baki ${fmt(row.remaining)}`);
+  const doPrint = await appConfirm({
+    title: "Receipt",
+    message: "Print / show receipt?",
+    okText: "Show Receipt",
+    cancelText: "Skip"
+  });
+  if (doPrint) {
     showInvoice({
       invoiceNo: "INST-" + (row.id || "").slice(-6),
       customerName: row.customerName || "",
-      customerPhone: "",
-      items: [{ name: row.item || "Installment", qty: 1, price: amt }],
+      customerPhone: row.customerPhone || "",
+      items: [{ name: (row.item || "Installment") + " (payment)", qty: 1, price: amt }],
       subtotal: amt, discount: 0, total: amt, payment: "Installment",
       date: new Date().toISOString(), _duplicate: false
     });
@@ -1323,7 +1540,12 @@ async function renderSettings() {
   const syncFull = document.getElementById("sync-full");
   if (syncFull) syncFull.onclick = async () => {
     if (!window.SMSync || !SMSync.currentUser()) { toast("Firebase email se login karo"); return; }
-    if (!confirm("Full resync: pending clear + pull cloud + push all local docs?")) return;
+    if (!(await appConfirm({
+      title: "Full Cloud Resync",
+      message: "Pending clear + pull cloud + push all local docs?",
+      okText: "Resync",
+      cancelText: "Cancel"
+    }))) return;
     toast("Full resync… wait");
     try {
       const n = await SMSync.fullResync();
@@ -1333,7 +1555,12 @@ async function renderSettings() {
     } catch (e) { toast(e.message || "Resync failed"); }
   };
   if (syncClear) syncClear.onclick = async () => {
-    if (!confirm("Pending queue clear? Local data safe rahega.")) return;
+    if (!(await appConfirm({
+      title: "Clear Pending Queue?",
+      message: "Local data safe rahega.",
+      okText: "Clear",
+      cancelText: "Cancel"
+    }))) return;
     await SMSync.clearPending();
     window._pendingCount = 0;
     updateSyncStatusBar();
@@ -1453,7 +1680,13 @@ async function restoreStockFromReturn(record) {
 
 /** IMEI / sold phone registry search */
 async function searchImeiRegistry() {
-  const q = prompt("IMEI / Serial search:");
+  const q = await appPrompt({
+    title: "IMEI / Serial Search",
+    message: "IMEI ya serial number likho:",
+    placeholder: "e.g. 35…",
+    okText: "Search",
+    cancelText: "Cancel"
+  });
   if (!q) return;
   const qq = q.trim().toLowerCase();
   const products = await DB.getAll("products");
@@ -1473,7 +1706,7 @@ async function searchImeiRegistry() {
     }
   }
   if (!hits.length) toast("No IMEI match");
-  else alert("IMEI results:\n\n" + hits.slice(0, 15).join("\n"));
+  else await appAlert({ title: "IMEI Results", message: hits.slice(0, 15).join("\n") });
 }
 window.searchImeiRegistry = searchImeiRegistry;
 
@@ -1587,7 +1820,10 @@ async function renderCashbook() {
 async function printDayClose(day, totals) {
   if (typeof ThermalPrinter === "undefined") {
     // screen fallback
-    alert("Day Close " + day + "\nIn: " + fmt(totals.in) + "\nOut: " + fmt(totals.out) + "\nNet: " + fmt(totals.in - totals.out));
+    await appAlert({
+      title: "Day Close " + day,
+      message: "In: " + fmt(totals.in) + "\nOut: " + fmt(totals.out) + "\nNet: " + fmt(totals.in - totals.out)
+    });
     return;
   }
   const printer = window.shopPrinter || new ThermalPrinter({ paperWidth: 80 });
@@ -1656,12 +1892,15 @@ function updateSyncStatusBar() {
     const last = localStorage.getItem("sm_last_backup_day");
     const day = todayKey();
     if (state.user && last !== day) {
-      setTimeout(() => {
-        if (confirm("Daily backup? Shop data JSON download ho jaye.")) {
-          backupNow().then(() => localStorage.setItem("sm_last_backup_day", day));
-        } else {
-          localStorage.setItem("sm_last_backup_day", day);
-        }
+      setTimeout(async () => {
+        const yes = await appConfirm({
+          title: "Daily Backup",
+          message: "Shop data JSON download ho jaye?",
+          okText: "Backup",
+          cancelText: "Skip"
+        });
+        if (yes) await backupNow();
+        localStorage.setItem("sm_last_backup_day", day);
       }, 2500);
     }
   } catch (e) {}
