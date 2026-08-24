@@ -18,6 +18,11 @@ self.addEventListener("install", (e) => {
   );
 });
 
+// Page se SKIP_WAITING → turant activate
+self.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "SKIP_WAITING") self.skipWaiting();
+});
+
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
