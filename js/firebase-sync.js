@@ -1,4 +1,4 @@
-/* firebase-sync.js — Firebase Auth + Firestore (1 doc per record, full sync) */
+/* firebase-sync.js — Fixed path (no /items) + fast auto sync */
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyB6-PchPTJHh6SRszmXzxU94yF4EzK0zXU",
   authDomain: "sm-mobile-bb69d.firebaseapp.com",
@@ -8,7 +8,6 @@ const FIREBASE_CONFIG = {
   appId: "1:885711976863:web:560648659980ca85a825aa"
 };
 
-// Each record = separate Firestore doc: shops/sanaullah/{store}/items/{id}
 const ROOT = "shops/sanaullah";
 const SYNC_STORES = [
   "products", "customers", "sales", "repairs", "installments",
@@ -55,6 +54,7 @@ window.SMSync = {
           console.info("[SMSync] Signed in", user.email || user.uid);
           await this.startListeners();
           await this.flushQueue();
+          setTimeout(() => this.pullAll().catch(() => {}), 800);
         } else {
           this.stopListeners();
         }
@@ -89,7 +89,7 @@ window.SMSync = {
     this.stopListeners();
     if (!this._db) return;
     for (const store of SYNC_STORES) {
-      const col = this._db.collection(ROOT + "/" + store + "/items");
+      const col = this._db.collection(ROOT + "/" + store);   // ✅ fixed (no /items)
       const unsub = col.onSnapshot(
         async (snap) => {
           for (const change of snap.docChanges()) {
@@ -151,7 +151,7 @@ window.SMSync = {
     this._flushing = true;
     try {
       const queue = await DB.getSyncQueue();
-      const batch = queue.slice(0, 80);
+      const batch = queue.slice(0, 100);
       for (const item of batch) {
         try {
           if (!item.data || !item.data.id) {
@@ -159,7 +159,7 @@ window.SMSync = {
             continue;
           }
           const ref = this._db
-            .collection(ROOT + "/" + item.store + "/items")
+            .collection(ROOT + "/" + item.store)   // ✅ fixed
             .doc(String(item.data.id));
 
           if (item.op === "delete") {
@@ -195,7 +195,7 @@ window.SMSync = {
     if (!this.isReady() || !this.currentUser()) return;
     for (const store of SYNC_STORES) {
       try {
-        const snap = await this._db.collection(ROOT + "/" + store + "/items").get();
+        const snap = await this._db.collection(ROOT + "/" + store).get();  // ✅ fixed
         for (const doc of snap.docs) {
           const data = doc.data();
           if (data && data.id) await this._putLocalOnly(store, data);
@@ -220,7 +220,7 @@ window.SMSync = {
           payload._syncedAt = Date.now();
           payload._by = user.uid;
           await this._db
-            .collection(ROOT + "/" + store + "/items")
+            .collection(ROOT + "/" + store)   // ✅ fixed
             .doc(String(rec.id))
             .set(payload, { merge: true });
           n++;
@@ -257,11 +257,14 @@ if (document.readyState === "loading") {
 }
 
 window.addEventListener("online", () => {
-  if (SMSync.isReady()) SMSync.flushQueue().catch(console.warn);
+  if (SMSync.isReady()) {
+    SMSync.flushQueue().catch(console.warn);
+    setTimeout(() => SMSync.pullAll().catch(() => {}), 500);
+  }
 });
 
 setInterval(() => {
   if (navigator.onLine && window.SMSync && SMSync.isReady() && SMSync.currentUser()) {
     SMSync.flushQueue().catch(() => {});
   }
-}, 1000);
+}, 400);
