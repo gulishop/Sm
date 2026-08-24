@@ -1472,6 +1472,24 @@ function updateSyncStatusBar() {
   await tryRestoreSession();
   window._pendingCount = await DB.pendingSyncCount();
   router();
+
+  // App open hote hi auto sync (cloud se data pull + local queue flush)
+  if (window.SMSync && SMSync.isReady && SMSync.currentUser && SMSync.currentUser()) {
+    setTimeout(async () => {
+      try {
+        await SMSync.pullAll();
+        await SMSync.flushQueue();
+        window._pendingCount = await DB.pendingSyncCount();
+        updateSyncStatusBar();
+        // Agar dashboard open hai to refresh
+        const h = location.hash.replace("#/", "").split("?")[0];
+        if (!h || h === "dashboard") router();
+      } catch (e) {
+        console.warn("Auto sync on open failed", e);
+      }
+    }, 1200);
+  }
+
   // Daily backup reminder (once per calendar day)
   try {
     const last = localStorage.getItem("sm_last_backup_day");
