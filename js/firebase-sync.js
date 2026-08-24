@@ -1,4 +1,4 @@
-/* firebase-sync.js — Fixed path (no /items) + fast auto sync */
+/* firebase-sync.js — Fixed path (no /items) + push-first fullResync */
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyB6-PchPTJHh6SRszmXzxU94yF4EzK0zXU",
   authDomain: "sm-mobile-bb69d.firebaseapp.com",
@@ -89,7 +89,7 @@ window.SMSync = {
     this.stopListeners();
     if (!this._db) return;
     for (const store of SYNC_STORES) {
-      const col = this._db.collection(ROOT + "/" + store);   // ✅ fixed (no /items)
+      const col = this._db.collection(ROOT + "/" + store);
       const unsub = col.onSnapshot(
         async (snap) => {
           for (const change of snap.docChanges()) {
@@ -159,7 +159,7 @@ window.SMSync = {
             continue;
           }
           const ref = this._db
-            .collection(ROOT + "/" + item.store)   // ✅ fixed
+            .collection(ROOT + "/" + item.store)
             .doc(String(item.data.id));
 
           if (item.op === "delete") {
@@ -195,7 +195,7 @@ window.SMSync = {
     if (!this.isReady() || !this.currentUser()) return;
     for (const store of SYNC_STORES) {
       try {
-        const snap = await this._db.collection(ROOT + "/" + store).get();  // ✅ fixed
+        const snap = await this._db.collection(ROOT + "/" + store).get();
         for (const doc of snap.docs) {
           const data = doc.data();
           if (data && data.id) await this._putLocalOnly(store, data);
@@ -219,8 +219,10 @@ window.SMSync = {
           const payload = this._compact(rec);
           payload._syncedAt = Date.now();
           payload._by = user.uid;
+          // ensure updatedAt so multi-device merge works
+          if (!payload.updatedAt) payload.updatedAt = Date.now();
           await this._db
-            .collection(ROOT + "/" + store)   // ✅ fixed
+            .collection(ROOT + "/" + store)
             .doc(String(rec.id))
             .set(payload, { merge: true });
           n++;
@@ -234,10 +236,11 @@ window.SMSync = {
     return n;
   },
 
+  /** Local pehle cloud pe, phir cloud se pull — client ka data safe rehta hai */
   async fullResync() {
     await this.clearPending();
-    await this.pullAll();
     const n = await this.pushAll();
+    await this.pullAll();
     return n;
   }
 };
