@@ -288,6 +288,32 @@ class ThermalPrinter {
     }
   }
 
+  /** Manual paper width switch — call from a settings button */
+  setPaperWidth(mm) {
+    const w = Number(mm) === 80 ? 80 : 58; // sirf 58 ya 80 allowed
+    this.setSettings({ paperWidth: w });
+    this.log("Paper width manually set to", w, "mm");
+    return w;
+  }
+
+  /** Chhota built-in settings popup: paper size + cut mode. UI mein button se call karo. */
+  openSettingsDialog() {
+    const currentW = this.paperWidth;
+    const w = prompt(
+      "Paper width chuno:\n\n1 = 58mm (chhota roll)\n2 = 80mm (bada roll)\n\nAbhi: " + currentW + "mm",
+      currentW <= 58 ? "1" : "2"
+    );
+    if (w === "1") this.setPaperWidth(58);
+    else if (w === "2") this.setPaperWidth(80);
+
+    const cutChoice = confirm(
+      "Cut mode:\n\nOK = Haath se faado (skip auto-cut, kam waste)\nCancel = Printer khud cut kare"
+    );
+    this.setSettings({ skipCut: cutChoice, feedBeforeCut: cutChoice ? 1 : 2 });
+
+    return { paperWidth: this.paperWidth, skipCut: this.skipCut };
+  }
+
   setSettings(opts = {}) {
     if (opts.paperWidth != null) {
       this.paperWidth = Number(opts.paperWidth);
@@ -480,7 +506,7 @@ window.shopPrinter = new ThermalPrinter({
   paperWidth: Number(localStorage.getItem("sm_printer_width")) || 58,
   chunkSize: 48,
   chunkDelay: 40,
-  feedBeforeCut: 2,
+  feedBeforeCut: 1,       // haath se faadne ke liye sirf 1 line feed
   usePartialCut: true,
-  skipCut: false
+  skipCut: true           // auto-cut band — cutter ka extra feed/waste khatam
 });
